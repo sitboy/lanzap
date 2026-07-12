@@ -150,19 +150,46 @@ function addFileBubble(meta, mine) {
   };
 }
 
+/* ── 手动组队(扫码/链接):URL hash 带 #r=房码 时覆盖自动分房 ── */
+const urlRoom = (location.hash.match(/r=([A-Za-z0-9]{4,8})/) || [])[1];
+
+function inviteUrl() { return location.origin + '/#r=' + urlRoom; }
+function showInvite() {
+  if (!urlRoom) { // 还在自动房:先生成组队码跳进组队房,刷新后自动弹层
+    const code = Math.random().toString(36).slice(2, 7).toUpperCase().replace(/[01OIL]/g, 'X');
+    sessionStorage.showInvite = '1';
+    location.hash = 'r=' + code; location.reload(); return;
+  }
+  const qr = document.getElementById('qr'); qr.innerHTML = '';
+  new QRCode(qr, { text: inviteUrl(), width: 176, height: 176, correctLevel: QRCode.CorrectLevel.M });
+  document.getElementById('room-label').textContent = t('room') + ' ' + urlRoom;
+  document.getElementById('mask').classList.add('show');
+}
+document.getElementById('close-btn').onclick = () => document.getElementById('mask').classList.remove('show');
+document.getElementById('mask').onclick = e => { if (e.target.id === 'mask') e.target.classList.remove('show'); };
+document.getElementById('copy-btn').onclick = async e => {
+  try { await navigator.clipboard.writeText(inviteUrl()); }
+  catch { const i = document.createElement('input'); i.value = inviteUrl();
+    document.body.appendChild(i); i.select(); document.execCommand('copy'); i.remove(); }
+  e.target.textContent = t('copied');
+  setTimeout(() => { e.target.textContent = t('copy_link'); }, 1500);
+};
+document.getElementById('leave-btn').onclick = () => { location.hash = ''; location.reload(); };
+
 /* ── 信令连接 ── */
 let ws, peers = new Map(); // id -> {name, ua, pc, dc, sendQueue, recving}
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}`);
   ws.onopen = () => ws.send(JSON.stringify({ type: 'hello', id: myId, name: myName,
+    room: urlRoom ? urlRoom.toUpperCase() : undefined,
     ua: /iPhone|iPad|Android/.test(navigator.userAgent) ? 'mobile' : 'desktop' }));
   ws.onmessage = async e => {
     const m = JSON.parse(e.data);
     if (m.type === 'peers') {
       if (m.room) { window.__room = m.room;
         const fn = document.getElementById('foot-note');
-        fn.textContent = t('direct') + ' · ' + (LANG === 'zh' ? '房间 ' : 'Room ') + m.room; }
+        fn.textContent = t('direct') + ' · ' + t(m.manual ? 'team_room' : 'room') + ' ' + m.room; }
       for (const p of m.peers) addPeer(p, true);   // 我是后来者:向已在场者发起连接
       renderPeers();
     } else if (m.type === 'peer-joined') {
@@ -195,6 +222,12 @@ function renderPeers() {
       <div class="pn">${esc(p.name)}</div>`;
     peersBar.appendChild(el);
   }
+  // "+"邀请入口(微信群加人心智):自动发现失灵时扫码组队
+  const inv = document.createElement('div');
+  inv.className = 'peer invite';
+  inv.innerHTML = `<div class="pa">+</div><div class="pn">${t('invite')}</div>`;
+  inv.onclick = showInvite;
+  peersBar.appendChild(inv);
   if (peers.size === 0) {
     const e = document.createElement('div'); e.id = 'empty'; e.textContent = t('only_you');
     peersBar.appendChild(e);
@@ -339,8 +372,24 @@ function sendFile(file) {
   });
 }
 
+/* ── 桌面边栏 ── */
+const sideAvatar = document.getElementById('side-avatar');
+if (sideAvatar) {
+  sideAvatar.innerHTML = avatarSvg(myKind, true);
+  sideAvatar.title = myName;
+  sideAvatar.onclick = $('rename').onclick;
+  document.getElementById('nav-invite').onclick = showInvite;
+  document.getElementById('nav-invite').title = t('invite');
+  document.getElementById('nav-menu').onclick = () => {
+    localStorage.lang = LANG === 'zh' ? 'en' : 'zh'; location.reload();
+  };
+  document.getElementById('nav-menu').title = LANG === 'zh' ? 'English' : '中文';
+}
+
 /* ── 启动:渲染历史 → 连接 ── */
 applyI18n();
+if (urlRoom && sessionStorage.showInvite) { sessionStorage.removeItem('showInvite');
+  setTimeout(showInvite, 400); }
 dbReady.then(() => {
   if (!db) return connect();
   const rq = db.transaction('msgs').objectStore('msgs').getAll();

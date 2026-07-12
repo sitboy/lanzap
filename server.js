@@ -49,28 +49,32 @@ function roomCode(key) {
 
 const wss = new WebSocketServer({ server });
 wss.on('connection', (ws, req) => {
-  const ip = roomKey(req);
-  let room = rooms.get(ip);
-  if (!room) { room = new Map(); rooms.set(ip, room); }
-  let peerId = null;
+  const autoKey = roomKey(req);
+  let room = null, key = null, peerId = null;
 
   const peersInfo = () => [...room.entries()].map(([id, s]) => ({ id, name: s._name, ua: s._ua }));
   const sendTo = (id, obj) => { const s = room.get(id); if (s && s.readyState === 1) s.send(JSON.stringify(obj)); };
   const broadcast = (obj, exceptId) => {
+    if (!room) return;
     for (const [id, s] of room) if (id !== exceptId && s.readyState === 1) s.send(JSON.stringify(obj));
   };
 
   ws.on('message', raw => {
     let m; try { m = JSON.parse(raw); } catch { return; }
     if (m.type === 'hello') {
-      // {type:hello, id, name, ua}
+      // {type:hello, id, name, ua, room?} —— room=手动组队码(扫码/链接),覆盖出口 IP 自动分组
+      const manual = typeof m.room === 'string' && /^[A-Z0-9]{4,8}$/.test(m.room);
+      key = manual ? 'code:' + m.room : autoKey;
+      room = rooms.get(key);
+      if (!room) { room = new Map(); rooms.set(key, room); }
       peerId = String(m.id).slice(0, 40);
       ws._name = String(m.name || '设备').slice(0, 40);
       ws._ua = String(m.ua || '').slice(0, 20);
       // 同 id 重连:顶掉旧连接
       const old = room.get(peerId); if (old && old !== ws) try { old.close(); } catch {}
       room.set(peerId, ws);
-      ws.send(JSON.stringify({ type: 'peers', you: peerId, room: roomCode(ip),
+      ws.send(JSON.stringify({ type: 'peers', you: peerId,
+        room: manual ? m.room : roomCode(key), manual,
         peers: peersInfo().filter(p => p.id !== peerId) }));
       broadcast({ type: 'peer-joined', peer: { id: peerId, name: ws._name, ua: ws._ua } }, peerId);
     } else if (m.type === 'rename' && peerId) {
@@ -83,10 +87,10 @@ wss.on('connection', (ws, req) => {
   });
 
   const bye = () => {
-    if (peerId && room.get(peerId) === ws) {
+    if (room && peerId && room.get(peerId) === ws) {
       room.delete(peerId);
       broadcast({ type: 'peer-left', id: peerId });
-      if (room.size === 0) rooms.delete(ip);
+      if (room.size === 0) rooms.delete(key);
     }
   };
   ws.on('close', bye);
