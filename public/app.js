@@ -150,21 +150,40 @@ function addFileBubble(meta, mine) {
   };
 }
 
-/* ── 手动组队(扫码/链接):URL hash 带 #r=房码 时覆盖自动分房 ── */
+/* ── 组队:三通道(扫码/输码/链接)。URL hash 带 #r=房码 时覆盖自动分房 ── */
 const urlRoom = (location.hash.match(/r=([A-Za-z0-9]{4,8})/) || [])[1];
+const card = document.getElementById('invite-card');
 
 function inviteUrl() { return location.origin + '/#r=' + urlRoom; }
+function enterRoom(code) {
+  sessionStorage.showInvite = '1';
+  location.hash = 'r=' + code.toUpperCase(); location.reload();
+}
 function showInvite() {
-  if (!urlRoom) { // 还在自动房:先生成组队码跳进组队房,刷新后自动弹层
-    const code = Math.random().toString(36).slice(2, 7).toUpperCase().replace(/[01OIL]/g, 'X');
-    sessionStorage.showInvite = '1';
-    location.hash = 'r=' + code; location.reload(); return;
+  // 默认面按角色习惯:手机多为加入方(扫码),桌面多为邀请方(出码)
+  const joinFirst = myKind === 'mobile' && !urlRoom;
+  if (!urlRoom && !joinFirst) {
+    // 桌面出码需要先有组队房:生成码进房,刷新后自动弹回本层
+    enterRoom(Math.random().toString(36).slice(2, 7).replace(/[01oil]/g, 'x'));
+    return;
   }
-  const qr = document.getElementById('qr'); qr.innerHTML = '';
-  new QRCode(qr, { text: inviteUrl(), width: 176, height: 176, correctLevel: QRCode.CorrectLevel.M });
-  document.getElementById('room-label').textContent = t('room') + ' ' + urlRoom;
+  card.classList.toggle('join', joinFirst);
+  if (urlRoom) {
+    const qr = document.getElementById('qr'); qr.innerHTML = '';
+    new QRCode(qr, { text: inviteUrl(), width: 172, height: 172, correctLevel: QRCode.CorrectLevel.M });
+    document.getElementById('room-label').innerHTML =
+      `<small>${t('room')}</small>` + urlRoom.split('').join(' ');
+  }
   document.getElementById('mask').classList.add('show');
 }
+document.getElementById('to-join').onclick = () => card.classList.add('join');
+document.getElementById('to-invite').onclick = () => {
+  if (!urlRoom) { // 出码需要先有组队房:生成码进房,刷新后自动弹回本层
+    enterRoom(Math.random().toString(36).slice(2, 7).replace(/[01oil]/g, 'x'));
+    return;
+  }
+  card.classList.remove('join');
+};
 document.getElementById('close-btn').onclick = () => document.getElementById('mask').classList.remove('show');
 document.getElementById('mask').onclick = e => { if (e.target.id === 'mask') e.target.classList.remove('show'); };
 document.getElementById('copy-btn').onclick = async e => {
@@ -175,6 +194,58 @@ document.getElementById('copy-btn').onclick = async e => {
   setTimeout(() => { e.target.textContent = t('copy_link'); }, 1500);
 };
 document.getElementById('leave-btn').onclick = () => { location.hash = ''; location.reload(); };
+
+/* 输码加入 */
+const codeInput = document.getElementById('code-input'), codeGo = document.getElementById('code-go');
+codeInput.placeholder = t('code_placeholder');
+codeInput.oninput = () => codeGo.classList.toggle('on', codeInput.value.trim().length >= 4);
+codeGo.onclick = () => { const v = codeInput.value.trim(); if (v.length >= 4) enterRoom(v); };
+codeInput.onkeydown = e => { if (e.key === 'Enter') codeGo.onclick(); };
+
+/* 站内扫码:BarcodeDetector 原生优先,jsQR 懒加载兜底(iOS 等) */
+const scanBox = document.getElementById('scan'), cam = document.getElementById('cam');
+let scanStream = null, scanTimer = null;
+function loadScript(src) { return new Promise((ok, no) => {
+  const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = no;
+  document.head.appendChild(s); }); }
+async function startScan() {
+  document.getElementById('mask').classList.remove('show');
+  try {
+    scanStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 } } });
+  } catch { alert(t('camera_fail')); return; }
+  cam.srcObject = scanStream;
+  try { await cam.play(); } catch {}
+  scanBox.classList.add('show');
+  let bd = null;
+  if ('BarcodeDetector' in window) { try { bd = new BarcodeDetector({ formats: ['qr_code'] }); } catch {} }
+  if (!bd && !window.jsQR) { try { await loadScript('jsqr.min.js'); } catch {} }
+  const cv = document.createElement('canvas');
+  scanTimer = setInterval(async () => {
+    if (!cam.videoWidth) return;
+    let text = '';
+    if (bd) { try { const r = await bd.detect(cam); if (r[0]) text = r[0].rawValue; } catch {} }
+    else if (window.jsQR) {
+      cv.width = cam.videoWidth; cv.height = cam.videoHeight;
+      const cx = cv.getContext('2d', { willReadFrequently: true });
+      cx.drawImage(cam, 0, 0);
+      const d = cx.getImageData(0, 0, cv.width, cv.height);
+      const r = jsQR(d.data, d.width, d.height);
+      if (r) text = r.data;
+    }
+    if (text) {
+      const m = text.match(/#r=([A-Za-z0-9]{4,8})/) || text.match(/^([A-Za-z0-9]{4,8})$/);
+      if (m) { stopScan(); enterRoom(m[1]); }   // 只认本产品的房码,别的二维码不理
+    }
+  }, 280);
+}
+function stopScan() {
+  clearInterval(scanTimer); scanTimer = null;
+  if (scanStream) { scanStream.getTracks().forEach(tr => tr.stop()); scanStream = null; }
+  scanBox.classList.remove('show');
+}
+document.getElementById('scan-btn').onclick = startScan;
+document.getElementById('scan-cancel').onclick = stopScan;
 
 /* ── 信令连接 ── */
 let ws, peers = new Map(); // id -> {name, ua, pc, dc, sendQueue, recving}
