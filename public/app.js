@@ -160,6 +160,9 @@ function connect() {
   ws.onmessage = async e => {
     const m = JSON.parse(e.data);
     if (m.type === 'peers') {
+      if (m.room) { window.__room = m.room;
+        const fn = document.getElementById('foot-note');
+        fn.textContent = t('direct') + ' · ' + (LANG === 'zh' ? '房间 ' : 'Room ') + m.room; }
       for (const p of m.peers) addPeer(p, true);   // 我是后来者:向已在场者发起连接
       renderPeers();
     } else if (m.type === 'peer-joined') {

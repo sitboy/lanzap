@@ -25,14 +25,31 @@ const server = http.createServer((req, res) => {
 const rooms = new Map();
 
 function clientIp(req) {
-  // 反代后取 X-Forwarded-For 首段;直连取 socket 地址
+  // X-Real-IP 由 nginx 注入(不可伪造);退 XFF 首段;再退 socket
+  const real = req.headers['x-real-ip'];
   const xff = req.headers['x-forwarded-for'];
-  return (xff ? xff.split(',')[0].trim() : req.socket.remoteAddress) || 'unknown';
+  return (real || (xff ? xff.split(',')[0].trim() : '') || req.socket.remoteAddress) || 'unknown';
+}
+
+// 分房键:IPv4 用整地址;IPv6 用 /64 前缀——同一局域网各设备的 v6 地址不同但共享前缀,
+// 逐台比对整地址会把同网设备拆散(经典坑)
+function roomKey(req) {
+  let ip = clientIp(req);
+  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  if (ip.includes(':')) return ip.split(':').slice(0, 4).join(':');
+  return ip;
+}
+
+// 房间短码:给用户自诊用(两台设备对一下码,不同=出口不同)
+function roomCode(key) {
+  let h = 0;
+  for (const c of key) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return h.toString(36).slice(-4).toUpperCase();
 }
 
 const wss = new WebSocketServer({ server });
 wss.on('connection', (ws, req) => {
-  const ip = clientIp(req);
+  const ip = roomKey(req);
   let room = rooms.get(ip);
   if (!room) { room = new Map(); rooms.set(ip, room); }
   let peerId = null;
@@ -53,7 +70,8 @@ wss.on('connection', (ws, req) => {
       // 同 id 重连:顶掉旧连接
       const old = room.get(peerId); if (old && old !== ws) try { old.close(); } catch {}
       room.set(peerId, ws);
-      ws.send(JSON.stringify({ type: 'peers', you: peerId, peers: peersInfo().filter(p => p.id !== peerId) }));
+      ws.send(JSON.stringify({ type: 'peers', you: peerId, room: roomCode(ip),
+        peers: peersInfo().filter(p => p.id !== peerId) }));
       broadcast({ type: 'peer-joined', peer: { id: peerId, name: ws._name, ua: ws._ua } }, peerId);
     } else if (m.type === 'rename' && peerId) {
       ws._name = String(m.name || '').slice(0, 40) || ws._name;
