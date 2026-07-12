@@ -217,27 +217,34 @@ async function startScan() {
   cam.srcObject = scanStream;
   try { await cam.play(); } catch {}
   scanBox.classList.add('show');
+  // jsQR 软解为主力:国产安卓无 Google 服务时 BarcodeDetector 是空壳(API 在、detect 永远无结果),
+  // 不能作为依赖,只能当加速器
+  if (!window.jsQR) { try { await loadScript('jsqr.min.js'); } catch {} }
   let bd = null;
   if ('BarcodeDetector' in window) { try { bd = new BarcodeDetector({ formats: ['qr_code'] }); } catch {} }
-  if (!bd && !window.jsQR) { try { await loadScript('jsqr.min.js'); } catch {} }
   const cv = document.createElement('canvas');
+  const cx = cv.getContext('2d', { willReadFrequently: true });
+  let busy = false;
   scanTimer = setInterval(async () => {
-    if (!cam.videoWidth) return;
+    if (!cam.videoWidth || busy) return;
+    busy = true;
     let text = '';
-    if (bd) { try { const r = await bd.detect(cam); if (r[0]) text = r[0].rawValue; } catch {} }
-    else if (window.jsQR) {
-      cv.width = cam.videoWidth; cv.height = cam.videoHeight;
-      const cx = cv.getContext('2d', { willReadFrequently: true });
-      cx.drawImage(cam, 0, 0);
-      const d = cx.getImageData(0, 0, cv.width, cv.height);
-      const r = jsQR(d.data, d.width, d.height);
+    if (bd) { try { const r = await bd.detect(cam); if (r[0]) text = r[0].rawValue; } catch { bd = null; } }
+    if (!text && window.jsQR) {
+      // 缩到 640 宽解码:速度 x4,识别率不受影响
+      const w = 640, h = Math.round(cam.videoHeight * w / cam.videoWidth);
+      cv.width = w; cv.height = h;
+      cx.drawImage(cam, 0, 0, w, h);
+      const d = cx.getImageData(0, 0, w, h);
+      const r = jsQR(d.data, w, h, { inversionAttempts: 'dontInvert' });
       if (r) text = r.data;
     }
+    busy = false;
     if (text) {
       const m = text.match(/#r=([A-Za-z0-9]{4,8})/) || text.match(/^([A-Za-z0-9]{4,8})$/);
       if (m) { stopScan(); enterRoom(m[1]); }   // 只认本产品的房码,别的二维码不理
     }
-  }, 280);
+  }, 260);
 }
 function stopScan() {
   clearInterval(scanTimer); scanTimer = null;
