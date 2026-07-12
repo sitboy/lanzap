@@ -6,16 +6,48 @@ const $ = id => document.getElementById(id);
 const list = $('list'), peersBar = $('peers'), txt = $('txt'),
       send = $('send'), plus = $('plus'), fileInput = $('file');
 
-/* ── i18n 渲染 ── */
+/* ── i18n 渲染(可重入:切语言原地热刷新,不 reload) ── */
 const isDesktopLayout = () => window.matchMedia('(min-width: 760px)').matches;
 function applyI18n() {
   document.querySelectorAll('[data-i18n]').forEach(el => el.textContent = t(el.dataset.i18n));
   txt.placeholder = t(isDesktopLayout() ? 'input_placeholder_desktop' : 'input_placeholder');
-  $('lang').textContent = LANG === 'zh' ? 'EN' : '中';
-  document.title = t('app_title') + ' Zap';
+  const ci = document.getElementById('code-input');
+  if (ci) ci.placeholder = t('code_placeholder');
+  $('lang').textContent = LANG.split('-')[0].toUpperCase();
+  document.title = t('app_title') + (LANG.startsWith('zh') ? ' Zap' : '');
   $('hero-desc').innerHTML = t('hero_desc', { url: `<b>${location.host}</b>` });
+  if (window.__room) {
+    $('foot-note').textContent = t('direct') + ' · ' + t(window.__manual ? 'team_room' : 'room') + ' ' + window.__room;
+  }
 }
-$('lang').onclick = () => { localStorage.lang = LANG === 'zh' ? 'en' : 'zh'; location.reload(); };
+
+/* 语言菜单:选择即热切换 */
+const langMenu = document.createElement('div');
+langMenu.id = 'langmenu';
+document.body.appendChild(langMenu);
+function renderLangMenu() {
+  langMenu.innerHTML = LANGS.map(([code, name]) =>
+    `<div class="lm-item${code === LANG ? ' on' : ''}" data-code="${code}">${name}</div>`).join('');
+}
+function setLang(code) {
+  window.LANG = code; localStorage.lang = code;
+  langMenu.classList.remove('show');
+  applyI18n(); renderPeers();          // 静态标签 + 动态区全部原地重绘
+}
+langMenu.onclick = e => { const c = e.target.dataset.code; if (c) setLang(c); };
+function toggleLangMenu(anchor) {
+  renderLangMenu();
+  const r = anchor.getBoundingClientRect();
+  langMenu.style.top = (r.bottom + 6) + 'px';
+  const rightSpace = window.innerWidth - r.right;
+  langMenu.style.left = 'auto';
+  langMenu.style.right = Math.max(8, rightSpace - 4) + 'px';
+  langMenu.classList.toggle('show');
+}
+$('lang').onclick = e => { e.stopPropagation(); toggleLangMenu(e.currentTarget); };
+document.addEventListener('click', e => {
+  if (!langMenu.contains(e.target)) langMenu.classList.remove('show');
+});
 
 /* ── 设备身份 ── */
 let myId = localStorage.deviceId;
@@ -29,6 +61,7 @@ if (!myName) {
   localStorage.deviceName = myName;
 }
 const myKind = /iPhone|iPad|Android/.test(navigator.userAgent) ? 'mobile' : 'desktop';
+document.getElementById('back').onclick = () => switchConv('all');
 $('rename').onclick = () => {
   const n = prompt(t('rename_prompt'), myName);
   if (n && n.trim()) { myName = n.trim().slice(0, 20); localStorage.deviceName = myName;
@@ -44,7 +77,50 @@ const dbReady = new Promise(ok => {
   rq.onsuccess = () => { db = rq.result; ok(); };
   rq.onerror = () => ok();
 });
-function saveMsg(m) { if (db) try { db.transaction('msgs', 'readwrite').objectStore('msgs').add(m); } catch {} }
+function saveMsg(m) { if (db) try { const { blob, ...rest } = m;
+  db.transaction('msgs', 'readwrite').objectStore('msgs').add(rest); } catch {} }
+
+/* ── 会话模型:'all'=群聊,peerId=私聊;消息入内存+DB,按当前会话渲染 ── */
+let msgs = [];
+let currentConv = 'all';
+const unread = Object.create(null);
+function pushMsg(m) { msgs.push(m); saveMsg(m); }
+function bumpUnread(conv) { unread[conv] = (unread[conv] || 0) + 1; renderPeers(); }
+
+function updateTitle() {
+  const el = document.querySelector('header .title');
+  const back = document.getElementById('back');
+  if (currentConv === 'all') {
+    el.dataset.i18n = 'app_title'; el.textContent = t('app_title');
+    if (back) back.style.display = 'none';
+    document.getElementById('rename').style.display = '';
+  } else {
+    delete el.dataset.i18n;
+    const p = peers.get(currentConv);
+    el.textContent = p ? p.name : '…';
+    if (back) back.style.display = 'flex';
+    document.getElementById('rename').style.display = 'none';
+  }
+}
+function renderConv() {
+  const hero = document.getElementById('hero');
+  list.innerHTML = ''; list.appendChild(hero);
+  lastTs = 0;
+  msgs.filter(m => (m.conv || 'all') === currentConv).slice(-200).forEach(m => {
+    if (m.type === 'text') addText(m, !!m.me);
+    else {
+      const ui = addFileBubble(m, !!m.me);
+      if (m.me && m.to) ui.to(m.to);
+      ui.done(m.blob || null);
+    }
+  });
+  scrollBottom();
+}
+function switchConv(conv) {
+  currentConv = conv;
+  delete unread[conv];
+  renderConv(); renderPeers(); updateTitle();
+}
 
 /* ── UI 渲染 ── */
 let lastTs = 0;
@@ -288,7 +364,7 @@ function connect() {
   ws.onmessage = async e => {
     const m = JSON.parse(e.data);
     if (m.type === 'peers') {
-      if (m.room) { window.__room = m.room;
+      if (m.room) { window.__room = m.room; window.__manual = !!m.manual;
         const fn = document.getElementById('foot-note');
         fn.textContent = t('direct') + ' · ' + t(m.manual ? 'team_room' : 'room') + ' ' + m.room; }
       for (const p of m.peers) addPeer(p, true);   // 我是后来者:向已在场者发起连接
@@ -302,7 +378,8 @@ function connect() {
     } else if (m.type === 'peer-left') {
       const p = peers.get(m.id);
       if (p) { sysLine(t('peer_left', { name: p.name })); try { p.pc && p.pc.close(); } catch {}
-               peers.delete(m.id); renderPeers(); }
+               peers.delete(m.id);
+               if (currentConv === m.id) switchConv('all'); else renderPeers(); }
     } else if (m.type === 'peer-renamed') {
       const p = peers.get(m.id); if (p) { p.name = m.name; renderPeers(); }
     } else if (m.type === 'signal') {
@@ -312,43 +389,70 @@ function connect() {
   ws.onclose = () => setTimeout(connect, 2000);
 }
 
+function badgeHtml(conv) {
+  const n = unread[conv];
+  return n ? `<div class="badge">${n > 99 ? '99+' : n}</div>` : '';
+}
 function renderPeers() {
-  // 移动:横向设备条
-  peersBar.innerHTML = `<div class="peer self"><div class="pa">${avatarSvg(myKind, true)}<div class="dot on"></div></div>
-    <div class="pn">${esc(myName)}</div></div>`;
+  // 移动:横向设备条(头像=会话入口;自己头像=回群聊)
+  peersBar.innerHTML = '';
+  const selfEl = document.createElement('div');
+  selfEl.className = 'peer self' + (currentConv === 'all' ? ' cur' : '');
+  selfEl.innerHTML = `<div class="pa">${avatarSvg(myKind, true)}<div class="dot on"></div>${badgeHtml('all')}</div>
+    <div class="pn">${esc(myName)}</div>`;
+  selfEl.onclick = () => switchConv('all');
+  peersBar.appendChild(selfEl);
   for (const [id, p] of peers) {
     const el = document.createElement('div');
-    el.className = 'peer';
+    el.className = 'peer' + (currentConv === id ? ' cur' : '');
     el.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false)}
-      <div class="dot${p.dc && p.dc.readyState === 'open' ? ' on' : ''}"></div></div>
+      <div class="dot${p.dc && p.dc.readyState === 'open' ? ' on' : ''}"></div>${badgeHtml(id)}</div>
       <div class="pn">${esc(p.name)}</div>`;
+    el.onclick = () => switchConv(id);
     peersBar.appendChild(el);
   }
   const inv = document.createElement('div');
   inv.className = 'peer invite';
   inv.innerHTML = `<div class="pa">+</div><div class="pn">${t('invite')}</div>`;
-  inv.onclick = showInvite;
+  inv.onclick = () => showInvite();
   peersBar.appendChild(inv);
 
-  // 桌面:中栏设备列表(设计 D1:本机行高亮+状态文字)
+  // 桌面:中栏=会话列表(所有人+每台设备,点击切换,当前高亮)
   const dl = document.getElementById('dl-items');
   if (dl) {
-    dl.innerHTML = `<div class="dl-row selfrow"><div class="pa">${avatarSvg(myKind, true)}<div class="dot on"></div></div>
-      <div class="di"><div class="dn">${esc(myName)}</div><div class="ds">${t('self_tag')}</div></div></div>`;
+    dl.innerHTML = '';
+    const allRow = document.createElement('div');
+    allRow.className = 'dl-row' + (currentConv === 'all' ? ' cur' : '');
+    allRow.innerHTML = `<div class="pa"><svg viewBox="0 0 40 40"><rect width="40" height="40" rx="10" fill="#10B981"/>
+      <circle cx="14.5" cy="15" r="4.6" fill="none" stroke="#fff" stroke-width="2"/>
+      <circle cx="26" cy="15.6" r="3.6" fill="none" stroke="#DFF6EC" stroke-width="1.8"/>
+      <path d="M6.5 30c.8-4.4 4.2-7 8-7s7.2 2.6 8 7" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+      <path d="M25 23.4c3.2.3 5.9 2.6 6.6 6.1" fill="none" stroke="#DFF6EC" stroke-width="1.8" stroke-linecap="round"/></svg>
+      ${badgeHtml('all')}</div>
+      <div class="di"><div class="dn">${t('all')}</div><div class="ds">${t('devices_title')} · ${peers.size + 1}</div></div>`;
+    allRow.onclick = () => switchConv('all');
+    dl.appendChild(allRow);
+    const selfRow = document.createElement('div');
+    selfRow.className = 'dl-row selfrow';
+    selfRow.innerHTML = `<div class="pa">${avatarSvg(myKind, true)}<div class="dot on"></div></div>
+      <div class="di"><div class="dn">${esc(myName)}</div><div class="ds">${t('self_tag')}</div></div>`;
+    dl.appendChild(selfRow);
     for (const [id, p] of peers) {
       const on = p.dc && p.dc.readyState === 'open';
       const row = document.createElement('div');
-      row.className = 'dl-row';
+      row.className = 'dl-row' + (currentConv === id ? ' cur' : '');
       row.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false)}
-        <div class="dot${on ? ' on' : ''}"></div></div>
+        <div class="dot${on ? ' on' : ''}"></div>${badgeHtml(id)}</div>
         <div class="di"><div class="dn">${esc(p.name)}</div>
         <div class="ds${on ? ' on' : ''}">${t(on ? 'st_on' : 'st_mid')}</div></div>`;
+      row.onclick = () => switchConv(id);
       dl.appendChild(row);
     }
   }
 
-  // 空态引导(M1):网内只有自己时显示
-  document.getElementById('hero').classList.toggle('show', peers.size === 0);
+  // 空态引导(M1):群聊且网内只有自己时显示
+  document.getElementById('hero').classList.toggle('show', peers.size === 0 && currentConv === 'all');
+  updateTitle();
 }
 
 /* ── WebRTC mesh ── */
@@ -400,20 +504,27 @@ function setupDC(p, dc, id) {
     if (typeof ev.data === 'string') {
       const m = JSON.parse(ev.data);
       if (m.t === 'text') {
-        addText({ from: p.name, kind: p.ua, text: m.text, ts: m.ts }, false);
-        saveMsg({ type: 'text', from: p.name, text: m.text, ts: m.ts });
+        const conv = m.scope === 'dm' ? id : 'all';
+        const rec = { conv, type: 'text', from: p.name, kind: p.ua, text: m.text, ts: m.ts };
+        pushMsg(rec);
+        if (conv === currentConv) addText(rec, false); else bumpUnread(conv);
       } else if (m.t === 'meta') {
-        p.recv = { meta: { ...m, from: p.name, kind: p.ua }, chunks: [], got: 0,
-                   ui: addFileBubble({ ...m, from: p.name }, false) };
+        const conv = m.scope === 'dm' ? id : 'all';
+        p.recv = { meta: { ...m, from: p.name, kind: p.ua }, conv, chunks: [], got: 0,
+                   ui: conv === currentConv
+                     ? addFileBubble({ ...m, from: p.name, kind: p.ua }, false) : null };
       } else if (m.t === 'end' && p.recv) {
         const r = p.recv; p.recv = null;
-        r.ui.done(new Blob(r.chunks, { type: r.meta.mime || 'application/octet-stream' }));
-        saveMsg({ type: 'file', from: p.name, name: r.meta.name, size: r.meta.size, ts: r.meta.ts });
+        const blob = new Blob(r.chunks, { type: r.meta.mime || 'application/octet-stream' });
+        const rec = { conv: r.conv, type: 'file', from: p.name, kind: p.ua,
+                      name: r.meta.name, size: r.meta.size, ts: r.meta.ts, blob };
+        pushMsg(rec);
+        if (r.ui) r.ui.done(blob); else bumpUnread(r.conv);
       }
     } else if (p.recv) {
       p.recv.chunks.push(ev.data);
       p.recv.got += ev.data.byteLength;
-      p.recv.ui.prog(p.recv.got / p.recv.meta.size);
+      if (p.recv.ui) p.recv.ui.prog(p.recv.got / p.recv.meta.size);
     }
   };
 }
@@ -426,10 +537,10 @@ async function pump(p) {
   p.sending = true;
   try {
     if (job.kind === 'text') {
-      p.dc.send(JSON.stringify({ t: 'text', text: job.text, ts: job.ts }));
+      p.dc.send(JSON.stringify({ t: 'text', text: job.text, ts: job.ts, scope: job.scope }));
     } else {
       p.dc.send(JSON.stringify({ t: 'meta', name: job.file.name, size: job.file.size,
-                                 mime: job.file.type, ts: job.ts }));
+                                 mime: job.file.type, ts: job.ts, scope: job.scope }));
       let off = 0;
       while (off < job.file.size) {
         if (p.dc.bufferedAmount > HIGH_WATER) {
@@ -449,16 +560,22 @@ async function pump(p) {
   pump(p);
 }
 
-/* ── 发送入口(发给房间内所有已连接设备) ── */
+/* ── 发送入口:群聊=全员,私聊=目标设备 ── */
 function targets() { return [...peers.values()].filter(p => p.dc && p.dc.readyState === 'open'); }
+function convTargets() {
+  if (currentConv === 'all') return targets();
+  const p = peers.get(currentConv);
+  return p && p.dc && p.dc.readyState === 'open' ? [p] : [];
+}
+const convScope = () => currentConv === 'all' ? 'all' : 'dm';
 
 function sendText() {
   const text = txt.value.trim(); if (!text) return;
   txt.value = ''; txt.dispatchEvent(new Event('input'));
   const ts = Date.now();
-  addText({ text, ts }, true);
-  saveMsg({ type: 'text', from: myName, me: 1, text, ts });
-  targets().forEach(p => { p.queue.push({ kind: 'text', text, ts }); pump(p); });
+  const rec = { conv: currentConv, type: 'text', from: myName, me: 1, text, ts };
+  pushMsg(rec); addText(rec, true);
+  convTargets().forEach(p => { p.queue.push({ kind: 'text', text, ts, scope: convScope() }); pump(p); });
 }
 send.onclick = sendText;
 txt.addEventListener('keydown', e => {
@@ -475,14 +592,16 @@ const attach = document.getElementById('attach');
 if (attach) attach.onclick = () => fileInput.click();
 fileInput.onchange = () => { [...fileInput.files].forEach(sendFile); fileInput.value = ''; };
 function sendFile(file) {
-  const ts = Date.now(), tg = targets();
+  const ts = Date.now(), tg = convTargets();
   const ui = addFileBubble({ name: file.name, size: file.size, ts }, true);
-  saveMsg({ type: 'file', from: myName, me: 1, name: file.name, size: file.size, ts });
+  const names = tg.map(p => p.name).join(' · ');
+  pushMsg({ conv: currentConv, type: 'file', from: myName, me: 1,
+            name: file.name, size: file.size, ts, to: names });
   if (!tg.length) { ui.fail(); sysLine(t('only_you')); return; }
-  ui.to(tg.map(p => p.name).join(' · '));   // 送达状态行:接收方名单(设计 D1)
+  ui.to(names);   // 送达状态行:接收方名单(设计 D1)
   let doneCount = 0;
   tg.forEach(p => {
-    p.queue.push({ kind: 'file', file, ts,
+    p.queue.push({ kind: 'file', file, ts, scope: convScope(),
       onprog: r => ui.prog(r),
       ondone: () => { if (++doneCount === tg.length) ui.done(null); },
       onfail: () => ui.fail() });
@@ -496,12 +615,11 @@ if (sideAvatar) {
   sideAvatar.innerHTML = avatarSvg(myKind, true);
   sideAvatar.title = myName;
   sideAvatar.onclick = $('rename').onclick;
-  document.getElementById('nav-invite').onclick = showInvite;
+  document.getElementById('nav-invite').onclick = () => showInvite();
   document.getElementById('nav-invite').title = t('invite');
-  document.getElementById('nav-menu').onclick = () => {
-    localStorage.lang = LANG === 'zh' ? 'en' : 'zh'; location.reload();
-  };
-  document.getElementById('nav-menu').title = LANG === 'zh' ? 'English' : '中文';
+  const nm = document.getElementById('nav-menu');
+  nm.onclick = e => { e.stopPropagation(); toggleLangMenu(nm); };
+  nm.title = 'Language';
 }
 
 /* ── 启动:渲染历史 → 连接 ── */
@@ -509,18 +627,13 @@ applyI18n();
 if (urlRoom && sessionStorage.showInvite) { sessionStorage.removeItem('showInvite');
   setTimeout(showInvite, 400); }
 dbReady.then(() => {
-  if (!db) return connect();
+  if (!db) { renderConv(); return connect(); }
   const rq = db.transaction('msgs').objectStore('msgs').getAll();
   rq.onsuccess = () => {
-    (rq.result || []).slice(-200).forEach(m => {
-      if (m.type === 'text') addText({ from: m.from, text: m.text, ts: m.ts }, !!m.me);
-      else { const ui = addFileBubble({ from: m.from, name: m.name, size: m.size, ts: m.ts }, !!m.me);
-             ui.done(null); }
-    });
-    const note = document.createElement('div'); note.className = 'sys';
-    note.textContent = t('history_note'); list.appendChild(note);
-    scrollBottom();
+    msgs = (rq.result || []).map(m => ({ ...m, conv: m.conv || 'all' }));
+    renderConv();
+    if (msgs.length) sysLine(t('history_note'));
     connect();
   };
-  rq.onerror = () => connect();
+  rq.onerror = () => { renderConv(); connect(); };
 });

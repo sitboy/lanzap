@@ -60,6 +60,12 @@
   .peer .dot.on { background:var(--dot-on); }
   .peer.invite .pa { border:1.5px dashed var(--ink-3); display:flex; align-items:center;
     justify-content:center; font-size:22px; color:var(--ink-3); cursor:pointer; }
+  .peer { cursor:pointer; }
+  .peer.cur .pa { outline:2.5px solid var(--brand); outline-offset:1.5px; }
+  .badge { position:absolute; top:-6px; right:-8px; min-width:17px; height:17px;
+    border-radius:999px; background:var(--danger); color:#fff; font-size:10.5px;
+    font-weight:600; display:flex; align-items:center; justify-content:center;
+    padding:0 4px; border:2px solid var(--panel); z-index:1; }
   #empty { display:none; }
 
   /* 聊天区 */
@@ -189,6 +195,18 @@
   #code-go.on { background:var(--brand); color:#fff; }
   .modal-note { font-size:11px; color:var(--ink-3); margin-top:12px; line-height:1.6; }
 
+  /* 语言菜单浮层 */
+  #langmenu { display:none; position:fixed; z-index:70; background:var(--card);
+    border-radius:12px; box-shadow:0 10px 36px rgba(10,12,14,.22); padding:6px;
+    max-height:min(430px, 70vh); overflow-y:auto; min-width:172px;
+    border:.5px solid var(--line); }
+  #langmenu.show { display:block; }
+  .lm-item { padding:9px 14px; font-size:14px; border-radius:8px; cursor:pointer;
+             color:var(--ink); white-space:nowrap; }
+  .lm-item:hover { background:var(--panel); }
+  .lm-item.on { color:var(--brand); font-weight:600; }
+  .lm-item.on::after { content:' ✓'; }
+
   /* ── 扫码视图(四角绿框取景) ── */
   #scan { display:none; position:fixed; inset:0; background:#0D0F12; z-index:60; }
   #scan.show { display:block; }
@@ -236,8 +254,10 @@
     #devlist .dl-head button { width:26px; height:26px; border:none; border-radius:6px;
       background:var(--line); color:var(--ink-2); font-size:16px; cursor:pointer; }
     #dl-items { flex:1; overflow-y:auto; }
-    .dl-row { display:flex; align-items:center; gap:10px; padding:9px 14px; cursor:default; }
-    .dl-row.selfrow { background:var(--line); }
+    .dl-row { display:flex; align-items:center; gap:10px; padding:9px 14px; cursor:pointer; }
+    .dl-row:hover { background:var(--line); }
+    .dl-row.cur { background:var(--line); }
+    .dl-row.selfrow { cursor:default; opacity:.75; }
     .dl-row .pa { width:36px; height:36px; border-radius:8px; position:relative; flex:none; }
     .dl-row .pa svg { width:100%; height:100%; border-radius:8px; display:block; }
     .dl-row .pa .dot { position:absolute; right:-3px; bottom:-3px; width:10px; height:10px;
@@ -303,7 +323,12 @@
 </div>
 <div id="main">
 <header>
-  <div class="hside"><button id="rename" data-i18n="rename"></button></div>
+  <div class="hside">
+    <button id="back" style="display:none" aria-label="back">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg>
+    </button>
+    <button id="rename" data-i18n="rename"></button>
+  </div>
   <div class="title" data-i18n="app_title"></div>
   <div class="hside r">
     <button id="scan-top" title="">
