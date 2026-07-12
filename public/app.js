@@ -26,7 +26,7 @@ if (!myName) {
     : /Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : 'Web';
   localStorage.deviceName = myName;
 }
-const myAvatar = /iPhone|iPad|Android/.test(navigator.userAgent) ? '📱' : '💻';
+const myKind = /iPhone|iPad|Android/.test(navigator.userAgent) ? 'mobile' : 'desktop';
 $('rename').onclick = () => {
   const n = prompt(t('rename_prompt'), myName);
   if (n && n.trim()) { myName = n.trim().slice(0, 20); localStorage.deviceName = myName;
@@ -51,10 +51,38 @@ const fmtTime = ts => { const d = new Date(ts), now = new Date();
   const hm = ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
   return d.toDateString() === now.toDateString() ? hm : (d.getMonth()+1)+'/'+d.getDate()+' '+hm; };
 const isImg = n => /\.(png|jpe?g|gif|webp)$/i.test(n);
-const fileIcon = n => /\.apk$/i.test(n) ? '🤖' : /\.(zip|rar|7z|gz)$/i.test(n) ? '🗜️'
-  : /\.(mp4|mov|mkv)$/i.test(n) ? '🎬' : /\.(mp3|m4a|flac)$/i.test(n) ? '🎵'
-  : /\.pdf$/i.test(n) ? '📕' : '📄';
 const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* 头像:微信风圆角方块+白色设备图形(自己绿,别人蓝) */
+function avatarSvg(kind, me) {
+  const bg = me ? '#07c160' : '#1485ee';
+  const glyph = kind === 'mobile'
+    ? '<rect x="14" y="9" width="12" height="21" rx="2.5" fill="none" stroke="#fff" stroke-width="2"/><circle cx="20" cy="26" r="1.4" fill="#fff"/>'
+    : '<rect x="8" y="10" width="24" height="15" rx="2" fill="none" stroke="#fff" stroke-width="2"/><path d="M16 30h8M20 25v5" stroke="#fff" stroke-width="2" stroke-linecap="round"/>';
+  return `<svg viewBox="0 0 40 40"><rect width="40" height="40" rx="6" fill="${bg}"/>${glyph}</svg>`;
+}
+
+/* 文件图标:微信风折角纸+类型色块字母 */
+const FTYPE = [
+  [/\.pdf$/i, 'PDF', '#e5252a'], [/\.(doc|docx)$/i, 'W', '#4b8bf5'],
+  [/\.(xls|xlsx|csv)$/i, 'X', '#22b14c'], [/\.(ppt|pptx)$/i, 'P', '#f6712c'],
+  [/\.apk$/i, 'APK', '#3ddc84'], [/\.(zip|rar|7z|gz)$/i, 'ZIP', '#f7b500'],
+  [/\.(mp4|mov|mkv|avi)$/i, '▶', '#9b59f5'], [/\.(mp3|m4a|flac|wav)$/i, '♪', '#f5679b'],
+  [/\.(txt|md|log)$/i, 'TXT', '#8a9aa9'],
+];
+function fileIconSvg(name) {
+  // 未知类型:用扩展名本身当标签,比问号有信息量
+  const ext = (name.match(/\.([a-z0-9]{1,4})$/i) || [])[1];
+  let label = ext ? ext.toUpperCase().slice(0, 3) : 'FILE', color = '#a6b6c3';
+  for (const [re, l, c] of FTYPE) if (re.test(name)) { label = l; color = c; break; }
+  return `<svg viewBox="0 0 40 46">
+    <path d="M6 4a3 3 0 013-3h16l9 9v29a3 3 0 01-3 3H9a3 3 0 01-3-3z" fill="#fff" stroke="#dfe5ea" stroke-width="1.4"/>
+    <path d="M25 1l9 9h-7a2 2 0 01-2-2z" fill="#eef2f5" stroke="#dfe5ea" stroke-width="1.2"/>
+    <rect x="3" y="24" width="27" height="13" rx="2.5" fill="${color}"/>
+    <text x="16.5" y="33.5" font-size="${label.length > 2 ? 7.5 : 9}" font-weight="700"
+      fill="#fff" text-anchor="middle" font-family="-apple-system,Arial">${label}</text>
+  </svg>`;
+}
 
 function timeDivider(ts) {
   if (ts - lastTs > 5*60*1000) {
@@ -74,7 +102,7 @@ function addText(m, mine) {
   timeDivider(m.ts);
   const row = document.createElement('div');
   row.className = 'row' + (mine ? ' me' : '');
-  row.innerHTML = `<div class="avatar">${mine ? myAvatar : '📱'}</div><div class="wrap">
+  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (m.kind || 'mobile'), mine)}</div><div class="wrap">
     <div class="dev">${mine ? '' : esc(m.from)}</div><div class="bubble text"></div></div>`;
   row.querySelector('.bubble').textContent = m.text;
   list.appendChild(row); scrollBottom();
@@ -85,11 +113,11 @@ function addFileBubble(meta, mine) {
   timeDivider(meta.ts || Date.now());
   const row = document.createElement('div');
   row.className = 'row' + (mine ? ' me' : '');
-  row.innerHTML = `<div class="avatar">${mine ? myAvatar : '📱'}</div><div class="wrap">
+  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (meta.kind || 'mobile'), mine)}</div><div class="wrap">
     <div class="dev">${mine ? '' : esc(meta.from || '')}</div>
     <div class="bubble file"><div class="fmain">
       <div class="finfo"><div class="fname"></div><div class="fsize">${fmtSize(meta.size)}</div></div>
-      <div class="ficon">${fileIcon(meta.name)}</div></div>
+      <div class="ficon">${fileIconSvg(meta.name)}</div></div>
       <div class="prog"><div></div></div>
       <div class="ffoot"><span class="fstat">${t(mine ? 'sending' : 'receiving')}</span><span class="fto"></span></div>
     </div></div>`;
@@ -154,13 +182,13 @@ function connect() {
 }
 
 function renderPeers() {
-  peersBar.innerHTML = `<div class="peer self"><div class="pa">${myAvatar}<div class="dot"></div></div>
-    <div class="pn">${esc(myName)} (${t('me')})</div></div>`;
+  peersBar.innerHTML = `<div class="peer self"><div class="pa">${avatarSvg(myKind, true)}<div class="dot on"></div></div>
+    <div class="pn">${esc(myName)}</div></div>`;
   for (const [id, p] of peers) {
     const el = document.createElement('div');
     el.className = 'peer';
-    el.innerHTML = `<div class="pa">${p.ua === 'mobile' ? '📱' : '💻'}
-      <div class="dot" style="background:${p.dc && p.dc.readyState === 'open' ? '#07c160' : '#f0ad4e'}"></div></div>
+    el.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false)}
+      <div class="dot${p.dc && p.dc.readyState === 'open' ? ' on' : ''}"></div></div>
       <div class="pn">${esc(p.name)}</div>`;
     peersBar.appendChild(el);
   }
@@ -219,10 +247,10 @@ function setupDC(p, dc, id) {
     if (typeof ev.data === 'string') {
       const m = JSON.parse(ev.data);
       if (m.t === 'text') {
-        addText({ from: p.name, text: m.text, ts: m.ts }, false);
+        addText({ from: p.name, kind: p.ua, text: m.text, ts: m.ts }, false);
         saveMsg({ type: 'text', from: p.name, text: m.text, ts: m.ts });
       } else if (m.t === 'meta') {
-        p.recv = { meta: { ...m, from: p.name }, chunks: [], got: 0,
+        p.recv = { meta: { ...m, from: p.name, kind: p.ua }, chunks: [], got: 0,
                    ui: addFileBubble({ ...m, from: p.name }, false) };
       } else if (m.t === 'end' && p.recv) {
         const r = p.recv; p.recv = null;
@@ -285,11 +313,13 @@ txt.addEventListener('keydown', e => {
 });
 txt.addEventListener('input', () => {
   send.classList.toggle('show', !!txt.value.trim());
-  plus.style.display = txt.value.trim() ? 'none' : 'flex';
+  plus.classList.toggle('hidden', !!txt.value.trim());
   txt.style.height = 'auto'; txt.style.height = Math.min(txt.scrollHeight, 110) + 'px';
 });
 
 plus.onclick = () => fileInput.click();
+const attach = document.getElementById('attach');
+if (attach) attach.onclick = () => fileInput.click();
 fileInput.onchange = () => { [...fileInput.files].forEach(sendFile); fileInput.value = ''; };
 function sendFile(file) {
   const ts = Date.now(), tg = targets();
