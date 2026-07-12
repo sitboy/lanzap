@@ -1,12 +1,17 @@
-# lan-transfer 局域网传输助手
+# 近传 Zap
 
-同一 WiFi 下的设备打开同一个网址,自动进入同一个"群":聊天流界面(微信传输助手式),
-文字/文件全部走 WebRTC 点对点直传——**文件永远不经过服务器**,服务器只做发现与握手牵线。
+**同一 WiFi，打开即传。** 不装 App 的隔空传,不用微信的传输助手:同一网络的设备打开同一个网址
+自动成群,文字与文件 P2P 直传——不经服务器、不限大小、不压画质。
 
-- 免装 App,浏览器即用;不限文件大小,图片不压缩
-- 按出口 IP 自动分房;设备改名;中/英双语(语言包外置 `public/i18n.js`)
-- 历史记录仅存本机浏览器(IndexedDB);服务器零存储零日志
-- 纯局域网 ICE(host candidates),不依赖外部 STUN/TURN
+- 聊天流界面(传输助手心智),历史只存本机浏览器(IndexedDB),服务器零存储
+- 自动同房(出口 IP/IPv6 前缀分组) + 组队兜底(站内扫码 / 5 位房码 / 复制链接)
+- 中英双语(语言包 `public/i18n.js`);暗色模式(prefers-color-scheme)
+- 零框架零构建:服务端仅依赖 ws;前端 vanilla;扫码 jsQR 软解(无 GMS 设备可用)+BarcodeDetector 加速
+- 设计:claude design 定稿(`design/近传Zap设计.html`,含 token/组件/双端/暗色全套)
 
 ## 运行
-node server.js   # PORT 环境变量可改,默认 8879;生产用 nginx 反代并配 wss + HTTPS(WebRTC 必需)
+node server.js   # 默认 :8879;生产用 nginx 反代(须传 X-Real-IP,wss upgrade)+HTTPS(WebRTC 必需)
+
+## 部署(现网)
+https://file.joestudy.net —— tokyo PM2 `lan-transfer`
+rsync -az --exclude node_modules ./ tokyo:/opt/apps/lan-transfer/ && ssh tokyo 'pm2 restart lan-transfer'

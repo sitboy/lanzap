@@ -3,192 +3,278 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>局域网传输助手</title>
+<title>近传 Zap</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%2310B981'/%3E%3Cpath d='M50 20 L79 74 Q80 77 76 76 L52 66 Q50 65.2 50 66.8 Z' fill='%23fff'/%3E%3Cpath d='M50 20 L21 74 Q20 77 24 76 L48 66 Q50 65.2 50 66.8 Z' fill='%23DFF6EC'/%3E%3C/svg%3E">
 <style>
+  /* ── 近传 Zap 设计 Token(来自 claude design 定稿) ── */
+  :root {
+    --brand:#10B981; --brand-2:#0E9E6E; --brand-hi:#12C88B; --brand-ink:#0B5C43;
+    --me-bubble:#D8F5E7; --me-ink:#123B2C;
+    --peer-blue:#1485EE;
+    --bg:#EEF1F4; --panel:#F7F8FA; --card:#FFFFFF; --bubble:#FFFFFF;
+    --ink:#17191D; --ink-2:#5B6470; --ink-3:#9AA6B2; --line:#E9ECEF;
+    --dot-on:#10B981; --dot-mid:#F5A623; --dot-off:#C3CBD3; --danger:#F0564A;
+    --r-bubble:6px; --r-card:10px; --r-modal:14px;
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --me-bubble:#0E4A37; --me-ink:#CBEEDD;
+    --bg:#17191D; --panel:#1E2126; --card:#24272D; --bubble:#24272D;
+    --ink:#ECEEF1; --ink-2:#9AA6B2; --ink-3:#5B6470; --line:#2C3037;
+    --dot-off:#4A5158;
+  } }
+
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body { height:100%; }
-  body { background:#dcdcdc; font:16px/1.45 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+  body { background:var(--bg);
+         font:16px/1.45 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;
+         color:var(--ink); }
+  button { font-family:inherit; }
 
-  /* 手机全宽;桌面居中窄栏,还原微信聊天窗比例 */
-  #app { height:100%; max-width:640px; margin:0 auto; background:#ededed;
-         display:flex; flex-direction:column; box-shadow:0 0 12px rgba(0,0,0,.12); }
+  #app { height:100%; max-width:640px; margin:0 auto; background:var(--bg);
+         display:flex; flex-direction:column; }
+  #side, #devlist { display:none; }
   #main { flex:1; min-height:0; display:flex; flex-direction:column; }
-  #side { display:none; }
 
-  header { background:#ededed; border-bottom:.5px solid #d5d5d5; height:48px;
-           padding:0 8px; padding-top:env(safe-area-inset-top);
+  /* 顶栏:改名 | 近传 | 扫码+语言 */
+  header { background:var(--panel); border-bottom:.5px solid var(--line); height:48px;
+           padding:0 6px; padding-top:env(safe-area-inset-top);
            display:flex; align-items:center; flex:none; }
-  header .side { width:60px; display:flex; }
-  header .side.r { justify-content:flex-end; }
-  header .title { flex:1; text-align:center; font-size:17px; font-weight:600; color:#000;
-                  overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-  header button { border:none; background:none; font-size:13px; color:#576b95; cursor:pointer; padding:6px; }
+  header .hside { width:76px; display:flex; align-items:center; }
+  header .hside.r { justify-content:flex-end; gap:2px; }
+  header .title { flex:1; text-align:center; font-size:17px; font-weight:600; }
+  header button { border:none; background:none; font-size:13px; color:var(--brand);
+                  cursor:pointer; padding:6px 8px; display:flex; align-items:center; }
+  #scan-top svg { width:20px; height:20px; }
 
-  /* 本网设备条:轻量融入背景 */
-  #peers { display:flex; gap:14px; padding:10px 14px 8px; overflow-x:auto; flex:none;
-           background:#ededed; border-bottom:.5px solid #e3e3e3; }
+  /* 本网设备条 */
+  #peers { display:flex; gap:14px; padding:10px 14px 9px; overflow-x:auto; flex:none;
+           background:var(--panel); border-bottom:.5px solid var(--line); }
   #peers::-webkit-scrollbar { display:none; }
-  .peer { display:flex; flex-direction:column; align-items:center; gap:4px; flex:none; width:48px; }
-  .peer .pa { width:40px; height:40px; border-radius:6px; position:relative; overflow:visible; }
-  .peer .pa svg { width:100%; height:100%; border-radius:6px; display:block; }
-  .peer .pn { font-size:10px; color:#999; max-width:52px; overflow:hidden;
+  .peer { display:flex; flex-direction:column; align-items:center; gap:4px; flex:none; width:50px; }
+  .peer .pa { width:42px; height:42px; border-radius:var(--r-card); position:relative; }
+  .peer .pa svg { width:100%; height:100%; border-radius:var(--r-card); display:block; }
+  .peer .pn { font-size:11px; color:var(--ink-2); max-width:54px; overflow:hidden;
               white-space:nowrap; text-overflow:ellipsis; }
   .peer .dot { position:absolute; right:-3px; bottom:-3px; width:11px; height:11px;
-               border-radius:50%; border:2px solid #ededed; background:#c9c9c9; }
-  .peer .dot.on { background:#07c160; }
-  #empty { font-size:12px; color:#b2b2b2; align-self:center; padding:0 4px; }
-  .peer.invite .pa { border:1.5px dashed #b8b8b8; background:none; display:flex;
-    align-items:center; justify-content:center; font-size:22px; color:#9a9a9a; cursor:pointer; }
+               border-radius:999px; border:2px solid var(--panel); background:var(--dot-mid); }
+  .peer .dot.on { background:var(--dot-on); }
+  .peer.invite .pa { border:1.5px dashed var(--ink-3); display:flex; align-items:center;
+    justify-content:center; font-size:22px; color:var(--ink-3); cursor:pointer; }
+  #empty { display:none; }
 
-  /* 邀请/加入 双面弹层 */
-  #mask { display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:50;
-          align-items:center; justify-content:center; }
-  #mask.show { display:flex; }
-  #invite-card { background:#fff; border-radius:14px; padding:28px 30px 16px; width:312px;
-                 text-align:center; position:relative;
-                 box-shadow:0 12px 40px rgba(0,0,0,.18); }
-  #invite-card h3 { font-size:17px; font-weight:600; margin-bottom:8px; }
-  #invite-card .tip { font-size:12.5px; color:#999; line-height:1.6; margin-bottom:18px; }
-  #qr { display:flex; justify-content:center; margin-bottom:14px; }
-  #qr img, #qr canvas { border-radius:8px; }
-  #room-label { font-size:26px; font-weight:700; color:#181818; letter-spacing:6px;
-                margin-bottom:18px; font-variant-numeric:tabular-nums; }
-  #room-label small { display:block; font-size:11px; font-weight:400; color:#b2b2b2;
-                      letter-spacing:1px; margin-bottom:2px; }
-  #invite-card button { display:block; width:100%; border:none; border-radius:8px; height:44px;
-    font-size:15px; cursor:pointer; margin-top:10px; }
-  #invite-card .primary { background:#07c160; color:#fff; font-weight:500; }
-  #invite-card .minor { background:#f5f5f5; color:#333; height:40px; }
-  .flip { display:block; font-size:13px; color:#576b95; margin:16px 0 6px; cursor:pointer; }
-  #close-btn { position:absolute; top:10px; right:10px; width:32px !important; height:32px;
-    background:none !important; color:#c0c0c0; font-size:15px; margin:0 !important; }
-  #pane-join { display:none; }
-  #invite-card.join #pane-invite { display:none; }
-  #invite-card.join #pane-join { display:block; }
-  #code-row { display:flex; gap:8px; margin-top:12px; }
-  #code-input { flex:1; border:1.5px solid #e5e5e5; border-radius:8px; height:44px;
-    text-align:center; font-size:17px; letter-spacing:4px; outline:none; text-transform:uppercase; }
-  #code-input:focus { border-color:#07c160; }
-  #code-input::placeholder { text-transform:none; font-size:13px; letter-spacing:0; color:#c0c0c0; }
-  #code-go { width:76px !important; background:#f5f5f5; color:#333; }
-  #code-go.on { background:#07c160; color:#fff; }
+  /* 聊天区 */
+  #list { flex:1; overflow-y:auto; padding:14px 14px 6px; position:relative; }
+  .time,.sys { text-align:center; color:var(--ink-3); font-size:12px; margin:13px 0 9px; }
 
-  /* 站内扫码层 */
-  #scan { display:none; position:fixed; inset:0; background:#000; z-index:60; }
-  #scan.show { display:block; }
-  #cam { width:100%; height:100%; object-fit:cover; }
-  #scan-frame { position:absolute; top:50%; left:50%; width:230px; height:230px;
-    transform:translate(-50%,-56%); border-radius:16px;
-    box-shadow:0 0 0 100vmax rgba(0,0,0,.45); border:2px solid rgba(255,255,255,.9); }
-  #scan-tip { position:absolute; left:0; right:0; top:calc(50% + 130px); text-align:center;
-    color:#fff; font-size:14px; text-shadow:0 1px 3px rgba(0,0,0,.5); }
-  #scan-cancel { position:absolute; top:calc(14px + env(safe-area-inset-top)); right:16px;
-    width:38px; height:38px; border:none; border-radius:50%; background:rgba(0,0,0,.45);
-    color:#fff; font-size:17px; cursor:pointer; }
+  /* 空态引导(M1) */
+  #hero { display:none; text-align:center; padding:44px 28px 30px; }
+  #hero.show { display:block; }
+  #hero .badge { width:76px; height:76px; margin:0 auto 22px; border-radius:22px;
+    background:linear-gradient(150deg,var(--brand-hi),var(--brand-2));
+    box-shadow:0 10px 26px rgba(16,185,129,.30);
+    display:flex; align-items:center; justify-content:center; }
+  #hero .badge svg { width:42px; height:42px; }
+  #hero h2 { font-size:24px; font-weight:800; letter-spacing:.5px; margin-bottom:12px; }
+  #hero p { font-size:14px; color:var(--ink-2); line-height:1.7; max-width:280px; margin:0 auto 6px; }
+  #hero p b { color:var(--brand); font-weight:600; }
+  #hero .lonely { font-size:12px; color:var(--ink-3); margin:14px 0 20px; }
+  #hero-scan { display:inline-flex; align-items:center; gap:8px; border:none; cursor:pointer;
+    background:linear-gradient(150deg,var(--brand-hi),var(--brand-2)); color:#fff;
+    font-size:16px; font-weight:600; height:48px; padding:0 30px; border-radius:12px;
+    box-shadow:0 8px 20px rgba(16,185,129,.28); }
+  #hero-scan svg { width:19px; height:19px; }
+  #hero .alt { margin-top:16px; font-size:13px; color:var(--brand); }
+  #hero .alt a { cursor:pointer; padding:0 8px; }
 
-  #list { flex:1; overflow-y:auto; padding:16px 16px 8px; }
-  .time,.sys { text-align:center; color:#a8a8a8; font-size:12px; margin:14px 0 10px; }
-
-  .row { display:flex; margin-bottom:16px; align-items:flex-start; }
+  .row { display:flex; margin-bottom:15px; align-items:flex-start; }
   .row.me { flex-direction:row-reverse; }
-  .avatar { width:40px; height:40px; border-radius:6px; flex:none; overflow:hidden; }
+  .avatar { width:38px; height:38px; border-radius:var(--r-card); flex:none; overflow:hidden; }
   .avatar svg { width:100%; height:100%; display:block; }
-  .wrap { max-width:calc(100% - 130px); display:flex; flex-direction:column; margin:0 12px; }
+  .wrap { max-width:calc(100% - 120px); display:flex; flex-direction:column; margin:0 10px; }
   .row.me .wrap { align-items:flex-end; }
-  .dev { font-size:12px; color:#b2b2b2; margin-bottom:4px; }
+  .dev { font-size:12px; color:var(--ink-3); margin-bottom:4px; }
 
-  /* 气泡 + 微信式尖角(pre-wrap 只给文字气泡,否则模板缩进会被渲染成空白) */
-  .bubble { border-radius:6px; position:relative; }
-  .bubble.text { padding:10px 13px; background:#fff; font-size:16px; color:#181818;
+  .bubble { border-radius:var(--r-bubble); position:relative; }
+  .bubble.text { padding:10px 13px; background:var(--bubble); font-size:16px; color:var(--ink);
                  word-break:break-all; white-space:pre-wrap; }
-  .bubble.text::before { content:''; position:absolute; top:14px; left:-10px;
-    border:5px solid transparent; border-right-color:#fff; }
-  .row.me .bubble.text { background:#95ec69; }
-  .row.me .bubble.text::before { left:auto; right:-10px;
-    border-right-color:transparent; border-left-color:#95ec69; }
+  .bubble.text::before { content:''; position:absolute; top:14px; left:-9px;
+    border:5px solid transparent; border-right-color:var(--bubble); }
+  .row.me .bubble.text { background:var(--me-bubble); color:var(--me-ink); }
+  .row.me .bubble.text::before { left:auto; right:-9px;
+    border-right-color:transparent; border-left-color:var(--me-bubble); }
 
-  /* 文件卡片:白卡 + 彩色类型图标 + 底部来源栏 */
-  .bubble.file { background:#fff; width:238px; max-width:100%; display:block;
-                 text-decoration:none; color:inherit; }
-  .bubble.file::before { content:''; position:absolute; top:14px; left:-10px;
-    border:5px solid transparent; border-right-color:#fff; }
-  .row.me .bubble.file::before { left:auto; right:-10px;
-    border-right-color:transparent; border-left-color:#fff; }
+  /* 文件卡(含送达状态行) */
+  .bubble.file { background:var(--card); width:242px; max-width:100%; display:block;
+                 text-decoration:none; color:inherit; border-radius:var(--r-card);
+                 box-shadow:0 1px 2px rgba(23,25,29,.04); }
+  .bubble.file::before { content:''; position:absolute; top:14px; left:-9px;
+    border:5px solid transparent; border-right-color:var(--card); }
+  .row.me .bubble.file::before { left:auto; right:-9px;
+    border-right-color:transparent; border-left-color:var(--card); }
   .fmain { display:flex; padding:13px 12px; align-items:flex-start; gap:10px; }
   .finfo { flex:1; min-width:0; }
-  .fname { font-size:15.5px; color:#181818; line-height:1.35; display:-webkit-box;
+  .fname { font-size:15px; color:var(--ink); line-height:1.35; display:-webkit-box;
            -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-  .fsize { font-size:12px; color:#b2b2b2; margin-top:5px; }
-  .ficon { width:40px; height:46px; flex:none; }
+  .fsize { font-size:12px; color:var(--ink-3); margin-top:5px; }
+  .ficon { width:38px; height:44px; flex:none; }
   .ficon svg { width:100%; height:100%; display:block; }
-  .ffoot { border-top:.5px solid #ececec; padding:6px 12px; font-size:11px; color:#b2b2b2;
-           display:flex; justify-content:space-between; }
-  .prog { height:2.5px; background:#f0f0f0; overflow:hidden; }
-  .prog>div { height:100%; background:#07c160; width:0%; }
+  .ffoot { border-top:.5px solid var(--line); padding:7px 12px; font-size:12px;
+           display:flex; justify-content:space-between; color:var(--ink-3); }
+  .ffoot .ok { color:var(--brand); font-weight:500; }
+  .prog { height:3px; background:var(--line); overflow:hidden; }
+  .prog>div { height:100%; background:var(--brand); width:0%; }
 
   .bubble.img { background:none; }
-  .bubble.img img { max-width:100%; max-height:280px; border-radius:6px; display:block; }
+  .bubble.img img { max-width:100%; max-height:270px; border-radius:var(--r-card); display:block; }
 
-  footer { background:#f6f6f6; border-top:.5px solid #d5d5d5; padding:8px 10px;
+  footer { background:var(--panel); border-top:.5px solid var(--line); padding:8px 10px;
            padding-bottom:calc(8px + env(safe-area-inset-bottom)); flex:none; }
   #tools { display:none; }
   #irow { display:flex; gap:9px; align-items:flex-end; }
-  #txt { flex:1; border:none; border-radius:5px; background:#fff; padding:9px 11px;
-         font-size:16px; resize:none; max-height:110px; outline:none; line-height:1.4; }
-  .btn { width:32px; height:32px; border-radius:50%; border:1.6px solid #6b6b6b;
-         background:none; font-size:20px; color:#4a4a4a; flex:none; cursor:pointer;
+  #txt { flex:1; border:none; border-radius:8px; background:var(--card); padding:9px 12px;
+         font-size:16px; resize:none; max-height:110px; outline:none; line-height:1.4;
+         color:var(--ink); }
+  .btn { width:32px; height:32px; border-radius:999px; border:1.6px solid var(--ink-2);
+         background:none; font-size:20px; color:var(--ink-2); flex:none; cursor:pointer;
          display:flex; align-items:center; justify-content:center; margin-bottom:3px; }
-  #send { display:none; border:none; background:#07c160; color:#fff; border-radius:5px;
+  #send { display:none; border:none; background:var(--brand); color:#fff; border-radius:8px;
           padding:0 18px; height:36px; font-size:15px; font-weight:500; cursor:pointer; }
   #send.show { display:block; }
   #plus.hidden { display:none; }
   #file { display:none; }
-  #foot-note { text-align:center; font-size:10.5px; color:#c6c6c6; padding:3px 0 5px;
-               background:#f6f6f6; flex:none; }
+  #foot-note { text-align:center; font-size:10.5px; color:var(--ink-3); padding:3px 0 6px;
+               background:var(--panel); flex:none; }
 
-  /* ── 桌面形态:对标微信 Mac / filehelper.weixin.qq.com ── */
-  @media (min-width: 640px) {
-    body { background:#2b2b2b; display:flex; align-items:center; justify-content:center; }
-    /* 窗口比例参照微信 Mac:宽 880 高≈屏 82%,居中悬浮 */
-    #app { width:880px; max-width:calc(100% - 64px); height:min(760px, calc(100% - 56px));
-           margin:0; border-radius:10px; overflow:hidden; flex-direction:row; }
-    /* 左侧功能边栏(微信 Mac 式,为扩展预留) */
-    #side { display:flex; flex-direction:column; align-items:center; width:60px; flex:none;
-            background:#e5e4e3; padding:20px 0 14px; gap:6px;
-            border-right:.5px solid #d8d8d8; }
-    #side-avatar { width:36px; height:36px; border-radius:6px; overflow:hidden;
-                   cursor:pointer; margin-bottom:14px; }
+  /* ── 组队弹层(Tab 式) ── */
+  #mask { display:none; position:fixed; inset:0; background:rgba(10,12,14,.5); z-index:50;
+          align-items:center; justify-content:center; }
+  #mask.show { display:flex; }
+  #invite-card { background:var(--card); border-radius:var(--r-modal); padding:24px 26px 14px;
+                 width:316px; text-align:center; position:relative;
+                 box-shadow:0 16px 48px rgba(10,12,14,.28); }
+  #invite-card h3 { font-size:18px; font-weight:700; margin-bottom:6px; }
+  #invite-card .tip { font-size:12.5px; color:var(--ink-3); margin-bottom:14px; }
+  #tabs { display:flex; background:var(--panel); border-radius:10px; padding:3px; margin-bottom:18px; }
+  #tabs button { flex:1; border:none; background:none; height:34px; border-radius:8px;
+    font-size:13.5px; color:var(--ink-2); cursor:pointer; }
+  #tabs button.on { background:var(--card); color:var(--ink); font-weight:600;
+    box-shadow:0 1px 4px rgba(23,25,29,.10); }
+  #qr { display:flex; justify-content:center; margin-bottom:12px; }
+  #qr img, #qr canvas { border-radius:8px; background:#fff; padding:6px; }
+  #room-label { margin-bottom:16px; }
+  #room-label small { display:block; font-size:11px; color:var(--ink-3); letter-spacing:1px;
+                      margin-bottom:3px; }
+  #room-label b { font-size:26px; font-weight:800; letter-spacing:8px; color:var(--ink);
+                  font-variant-numeric:tabular-nums; }
+  #invite-card button.block { display:block; width:100%; border:none; border-radius:10px;
+    height:44px; font-size:15px; cursor:pointer; margin-top:10px; }
+  #invite-card .primary { background:linear-gradient(150deg,var(--brand-hi),var(--brand-2));
+    color:#fff; font-weight:600; }
+  #invite-card .minor { background:var(--panel); color:var(--ink); height:40px; }
+  #leave-btn { background:none !important; color:var(--ink-3) !important; height:34px !important;
+               font-size:13px !important; }
+  #close-btn { position:absolute; top:10px; right:10px; width:32px; height:32px; border:none;
+    background:none; color:var(--ink-3); font-size:15px; cursor:pointer; }
+  #pane-join { display:none; }
+  #invite-card.join #pane-invite { display:none; }
+  #invite-card.join #pane-join { display:block; }
+  #code-row { display:flex; gap:8px; margin-top:12px; }
+  #code-input { flex:1; border:1.5px solid var(--line); border-radius:10px; height:44px;
+    background:var(--card); color:var(--ink);
+    text-align:center; font-size:17px; letter-spacing:4px; outline:none; text-transform:uppercase; }
+  #code-input:focus { border-color:var(--brand); }
+  #code-input::placeholder { text-transform:none; font-size:13px; letter-spacing:0; color:var(--ink-3); }
+  #code-go { width:78px; border:none; border-radius:10px; background:var(--panel);
+             color:var(--ink-2); font-size:15px; cursor:pointer; }
+  #code-go.on { background:var(--brand); color:#fff; }
+  .modal-note { font-size:11px; color:var(--ink-3); margin-top:12px; line-height:1.6; }
+
+  /* ── 扫码视图(四角绿框取景) ── */
+  #scan { display:none; position:fixed; inset:0; background:#0D0F12; z-index:60; }
+  #scan.show { display:block; }
+  #cam { width:100%; height:100%; object-fit:cover; opacity:.92; }
+  #scan-frame { position:absolute; top:50%; left:50%; width:232px; height:232px;
+    transform:translate(-50%,-58%); }
+  #scan-frame i { position:absolute; width:34px; height:34px; border:3px solid var(--brand-hi); }
+  #scan-frame i:nth-child(1) { top:0; left:0; border-right:none; border-bottom:none; border-radius:10px 0 0 0; }
+  #scan-frame i:nth-child(2) { top:0; right:0; border-left:none; border-bottom:none; border-radius:0 10px 0 0; }
+  #scan-frame i:nth-child(3) { bottom:0; left:0; border-right:none; border-top:none; border-radius:0 0 0 10px; }
+  #scan-frame i:nth-child(4) { bottom:0; right:0; border-left:none; border-top:none; border-radius:0 0 10px 0; }
+  #scan-tip { position:absolute; left:0; right:0; top:calc(50% + 118px); text-align:center;
+    color:#ECEEF1; font-size:14px; text-shadow:0 1px 3px rgba(0,0,0,.5); }
+  #scan-cancel { position:absolute; top:calc(14px + env(safe-area-inset-top)); right:16px;
+    width:38px; height:38px; border:none; border-radius:999px; background:rgba(20,22,26,.6);
+    color:#fff; font-size:17px; cursor:pointer; }
+
+  /* ── 桌面:三栏(边栏|设备列表|聊天区),对标设计 D1/D2 ── */
+  @media (min-width: 760px) {
+    body { display:flex; align-items:center; justify-content:center;
+           background:#191B1F;
+           background-image:radial-gradient(circle at 20% 0%, #22262c 0%, #191B1F 60%); }
+    #app { width:920px; max-width:calc(100% - 64px); height:min(700px, calc(100% - 56px));
+           border-radius:12px; overflow:hidden; flex-direction:row;
+           box-shadow:0 24px 64px rgba(0,0,0,.4); }
+    /* 左:功能边栏 */
+    #side { display:flex; flex-direction:column; align-items:center; width:56px; flex:none;
+            background:var(--panel); padding:16px 0 12px; gap:6px;
+            border-right:.5px solid var(--line); }
+    #side-avatar { width:34px; height:34px; border-radius:8px; overflow:hidden;
+                   cursor:pointer; margin-bottom:12px; }
     #side-avatar svg { width:100%; height:100%; display:block; }
-    .nav-ic { width:40px; height:40px; border:none; background:none; cursor:pointer;
-              color:#5f5f5f; border-radius:6px; display:flex; align-items:center;
+    .nav-ic { width:38px; height:38px; border:none; background:none; cursor:pointer;
+              color:var(--ink-2); border-radius:8px; display:flex; align-items:center;
               justify-content:center; }
-    .nav-ic svg { width:24px; height:24px; }
-    .nav-ic:hover { background:#dbdad9; }
-    .nav-ic.active { color:#07c160; }
+    .nav-ic svg { width:22px; height:22px; }
+    .nav-ic:hover { background:var(--line); }
+    .nav-ic.active { color:var(--brand); background:var(--line); }
     .nav-spacer { flex:1; }
-    header .side { width:auto; }
-    #rename { display:none; }        /* 桌面:改名入口=点边栏头像 */
-    header { background:#f7f7f7; height:52px; }
-    header .title { text-align:left; padding-left:8px; font-size:16px; }
-    #peers { background:#f7f7f7; }
-    #list { background:#f5f5f5; }
-    .bubble.text { background:#ececec; }
-    .bubble.text::before { border-right-color:#ececec; }
-    .row.me .bubble.text { background:#95ec69; }
-    .row.me .bubble.text::before { border-left-color:#95ec69; border-right-color:transparent; }
-    .avatar { width:36px; height:36px; border-radius:4px; }
-    footer { background:#f7f7f7; padding:4px 14px 10px; display:flex; flex-direction:column; }
-    #tools { display:flex; padding:4px 0 2px; }
-    #tools button { border:none; background:none; cursor:pointer; padding:4px; border-radius:4px; }
-    #tools button:hover { background:#e8e8e8; }
+    /* 中:设备列表 */
+    #devlist { display:flex; flex-direction:column; width:212px; flex:none;
+               background:var(--panel); border-right:.5px solid var(--line); }
+    #devlist .dl-head { display:flex; align-items:center; justify-content:space-between;
+      padding:16px 14px 10px; font-size:14px; font-weight:700; }
+    #devlist .dl-head button { width:26px; height:26px; border:none; border-radius:6px;
+      background:var(--line); color:var(--ink-2); font-size:16px; cursor:pointer; }
+    #dl-items { flex:1; overflow-y:auto; }
+    .dl-row { display:flex; align-items:center; gap:10px; padding:9px 14px; cursor:default; }
+    .dl-row.selfrow { background:var(--line); }
+    .dl-row .pa { width:36px; height:36px; border-radius:8px; position:relative; flex:none; }
+    .dl-row .pa svg { width:100%; height:100%; border-radius:8px; display:block; }
+    .dl-row .pa .dot { position:absolute; right:-3px; bottom:-3px; width:10px; height:10px;
+      border-radius:999px; border:2px solid var(--panel); background:var(--dot-mid); }
+    .dl-row .pa .dot.on { background:var(--dot-on); }
+    .dl-row .di { min-width:0; }
+    .dl-row .dn { font-size:14px; font-weight:500; white-space:nowrap; overflow:hidden;
+                  text-overflow:ellipsis; }
+    .dl-row .ds { font-size:11.5px; color:var(--ink-3); }
+    .dl-row .ds.on { color:var(--brand); }
+    #dl-invite { margin:10px 12px 12px; border:1.5px dashed var(--ink-3); background:none;
+      border-radius:10px; height:38px; color:var(--ink-2); font-size:13px; cursor:pointer;
+      display:flex; align-items:center; justify-content:center; gap:6px; }
+    #dl-invite:hover { color:var(--brand); border-color:var(--brand); }
+    /* 右:聊天区 */
+    #main { background:var(--bg); }
+    header { height:50px; }
+    header .title { text-align:left; padding-left:14px; font-size:15.5px; font-weight:700; }
+    header .hside { width:auto; }
+    #rename, #scan-top { display:none; }
+    #peers { display:none; }         /* 桌面用中栏设备列表,隐藏横向设备条 */
+    #hero .alt a[data-act=scan] { display:none; }  /* 桌面无后摄,隐藏扫一扫 */
+    #hero-scan { display:none; }
+    .avatar { width:36px; height:36px; border-radius:8px; }
+    footer { padding:6px 14px 10px; display:flex; flex-direction:column; }
+    #tools { display:flex; padding:4px 0 2px; gap:2px; }
+    #tools button { border:none; background:none; cursor:pointer; padding:5px;
+      border-radius:6px; color:var(--ink-2); display:flex; }
+    #tools button:hover { background:var(--line); }
+    #tools svg { width:20px; height:20px; }
     #irow { flex-direction:column; align-items:stretch; gap:0; }
     #plus { display:none; }
-    #txt { background:transparent; border-radius:0; padding:6px 4px; font-size:15px;
-           min-height:64px; max-height:180px; }
+    #txt { background:transparent; border-radius:0; padding:6px 2px; font-size:15px;
+           min-height:58px; max-height:170px; }
     #send { display:block; align-self:flex-end; margin-top:4px; height:30px; padding:0 26px;
-            font-size:13px; border-radius:4px; background:#e9e9e9; color:#b6b6b6; }
-    #send.show { background:#07c160; color:#fff; }
-    #foot-note { background:#f7f7f7; }
+            font-size:13px; border-radius:6px; background:var(--line); color:var(--ink-3); }
+    #send.show { background:var(--brand); color:#fff; }
   }
 </style>
 </head>
@@ -207,19 +293,50 @@
     <svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 8.5h18M5 14h18M5 19.5h18"/></svg>
   </button>
 </nav>
+<div id="devlist">
+  <div class="dl-head"><span data-i18n="devices_title"></span><button id="dl-plus">＋</button></div>
+  <div id="dl-items"></div>
+  <button id="dl-invite">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 17.5h7M17.5 14v7"/></svg>
+    <span data-i18n="invite_cta"></span>
+  </button>
+</div>
 <div id="main">
 <header>
-  <div class="side"><button id="rename" data-i18n="rename"></button></div>
+  <div class="hside"><button id="rename" data-i18n="rename"></button></div>
   <div class="title" data-i18n="app_title"></div>
-  <div class="side r"><button id="lang"></button></div>
+  <div class="hside r">
+    <button id="scan-top" title="">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 8V5a2 2 0 012-2h3M16 3h3a2 2 0 012 2v3M21 16v3a2 2 0 01-2 2h-3M8 21H5a2 2 0 01-2-2v-3M7 12h10"/></svg>
+    </button>
+    <button id="lang"></button>
+  </div>
 </header>
 <div id="peers"></div>
-<div id="list"></div>
+<div id="list">
+  <div id="hero">
+    <div class="badge"><svg viewBox="0 0 100 100">
+      <path d="M50 20 L79 74 Q80 77 76 76 L52 66 Q50 65.2 50 66.8 Z" fill="#fff"/>
+      <path d="M50 20 L21 74 Q20 77 24 76 L48 66 Q50 65.2 50 66.8 Z" fill="#DFF6EC"/>
+    </svg></div>
+    <h2 data-i18n="hero_title"></h2>
+    <p id="hero-desc"></p>
+    <div class="lonely" data-i18n="only_you"></div>
+    <button id="hero-scan">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M3 8V5a2 2 0 012-2h3M16 3h3a2 2 0 012 2v3M21 16v3a2 2 0 01-2 2h-3M8 21H5a2 2 0 01-2-2v-3M7 12h10"/></svg>
+      <span data-i18n="hero_scan"></span>
+    </button>
+    <div class="alt">
+      <a data-act="code" data-i18n="hero_code"></a>·<a data-act="qr" data-i18n="hero_qr"></a>
+    </div>
+  </div>
+</div>
 <footer>
-  <div id="tools"><button id="attach" title="发送文件">
-    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#4a4a4a" stroke-width="1.6">
-      <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
-  </button></div>
+  <div id="tools">
+    <button id="attach" title="">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+    </button>
+  </div>
   <div id="irow">
     <textarea id="txt" rows="1"></textarea>
     <button class="btn" id="plus">+</button>
@@ -231,31 +348,31 @@
 </div>
 </div>
 <div id="mask"><div id="invite-card">
-  <!-- 面 1:邀请(出码) -->
+  <h3 data-i18n="invite_title"></h3>
+  <div class="tip" data-i18n="invite_tip"></div>
+  <div id="tabs">
+    <button id="to-invite" data-i18n="tab_invite"></button>
+    <button id="to-join" data-i18n="tab_join"></button>
+  </div>
   <div id="pane-invite">
-    <h3 data-i18n="invite_title"></h3>
-    <div class="tip" data-i18n="invite_tip"></div>
     <div id="qr"></div>
     <div id="room-label"></div>
-    <button id="copy-btn" class="minor" data-i18n="copy_link"></button>
-    <button id="leave-btn" class="minor" data-i18n="leave_room"></button>
-    <a class="flip" id="to-join" data-i18n="to_join"></a>
+    <button id="copy-btn" class="block minor" data-i18n="copy_link"></button>
+    <button id="leave-btn" class="block" data-i18n="leave_room"></button>
+    <div class="modal-note" data-i18n="invite_note"></div>
   </div>
-  <!-- 面 2:加入(扫码/输码) -->
   <div id="pane-join">
-    <h3 data-i18n="join_title"></h3>
-    <button id="scan-btn" class="primary" data-i18n="scan_join"></button>
+    <button id="scan-btn" class="block primary" data-i18n="scan_join"></button>
     <div id="code-row">
       <input id="code-input" maxlength="8" autocomplete="off" autocapitalize="characters">
       <button id="code-go" data-i18n="join"></button>
     </div>
-    <a class="flip" id="to-invite" data-i18n="to_invite"></a>
+    <div class="modal-note" data-i18n="join_note"></div>
   </div>
   <button id="close-btn">✕</button>
 </div></div>
-<!-- 站内扫码(不求微信) -->
 <div id="scan"><video id="cam" playsinline muted></video>
-  <div id="scan-frame"></div>
+  <div id="scan-frame"><i></i><i></i><i></i><i></i></div>
   <div id="scan-tip" data-i18n="scan_tip"></div>
   <button id="scan-cancel">✕</button>
 </div>

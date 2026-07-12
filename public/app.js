@@ -7,11 +7,13 @@ const list = $('list'), peersBar = $('peers'), txt = $('txt'),
       send = $('send'), plus = $('plus'), fileInput = $('file');
 
 /* ── i18n 渲染 ── */
+const isDesktopLayout = () => window.matchMedia('(min-width: 760px)').matches;
 function applyI18n() {
   document.querySelectorAll('[data-i18n]').forEach(el => el.textContent = t(el.dataset.i18n));
-  txt.placeholder = t('input_placeholder');
+  txt.placeholder = t(isDesktopLayout() ? 'input_placeholder_desktop' : 'input_placeholder');
   $('lang').textContent = LANG === 'zh' ? 'EN' : '中';
-  document.title = t('app_title');
+  document.title = t('app_title') + ' Zap';
+  $('hero-desc').innerHTML = t('hero_desc', { url: `<b>${location.host}</b>` });
 }
 $('lang').onclick = () => { localStorage.lang = LANG === 'zh' ? 'en' : 'zh'; location.reload(); };
 
@@ -53,13 +55,17 @@ const fmtTime = ts => { const d = new Date(ts), now = new Date();
 const isImg = n => /\.(png|jpe?g|gif|webp)$/i.test(n);
 const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
-/* 头像:微信风圆角方块+白色设备图形(自己绿,别人蓝) */
+/* 头像(近传规格):自己=品牌绿渐变,他人=蓝;圆角10;手机/电脑白色线条图形 */
+let _gid = 0;
 function avatarSvg(kind, me) {
-  const bg = me ? '#07c160' : '#1485ee';
   const glyph = kind === 'mobile'
     ? '<rect x="14" y="9" width="12" height="21" rx="2.5" fill="none" stroke="#fff" stroke-width="2"/><circle cx="20" cy="26" r="1.4" fill="#fff"/>'
     : '<rect x="8" y="10" width="24" height="15" rx="2" fill="none" stroke="#fff" stroke-width="2"/><path d="M16 30h8M20 25v5" stroke="#fff" stroke-width="2" stroke-linecap="round"/>';
-  return `<svg viewBox="0 0 40 40"><rect width="40" height="40" rx="6" fill="${bg}"/>${glyph}</svg>`;
+  if (!me) return `<svg viewBox="0 0 40 40"><rect width="40" height="40" rx="10" fill="#1485EE"/>${glyph}</svg>`;
+  const id = 'g' + (++_gid);
+  return `<svg viewBox="0 0 40 40"><defs><linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#12C88B"/><stop offset="1" stop-color="#0E9E6E"/></linearGradient></defs>
+    <rect width="40" height="40" rx="10" fill="url(#${id})"/>${glyph}</svg>`;
 }
 
 /* 文件图标:微信风折角纸+类型色块字母 */
@@ -125,9 +131,11 @@ function addFileBubble(meta, mine) {
   list.appendChild(row); scrollBottom();
   return {
     prog: p => { row.querySelector('.prog>div').style.width = (p*100).toFixed(1) + '%'; },
+    to: names => { row.querySelector('.fto').textContent = names; },
     done: blob => {
       row.querySelector('.prog').remove();
-      row.querySelector('.fstat').textContent = t('sent');
+      const st = row.querySelector('.fstat');
+      st.textContent = t('sent'); st.classList.add('ok');
       if (blob) { // 接收方:变成可保存/可预览
         const url = URL.createObjectURL(blob);
         if (isImg(meta.name)) {
@@ -139,13 +147,15 @@ function addFileBubble(meta, mine) {
           a.href = url; a.download = meta.name;
           a.className = 'bubble file'; a.style.display = 'block';
           a.innerHTML = row.querySelector('.bubble.file').innerHTML;
-          a.querySelector('.fstat').textContent = t('click_download');
+          a.querySelector('.fstat').textContent = '⬇ ' + t('click_download');
+          a.querySelector('.fstat').classList.add('ok');
+          a.querySelector('.fto').textContent = fmtSize(meta.size);
           row.querySelector('.bubble.file').replaceWith(a);
         }
         if (nearBottom()) scrollBottom();
       }
     },
-    fail: () => { row.querySelector('.prog>div').style.background = '#fa5151';
+    fail: () => { row.querySelector('.prog>div').style.background = 'var(--danger)';
                   row.querySelector('.fstat').textContent = t('failed'); },
   };
 }
@@ -159,30 +169,32 @@ function enterRoom(code) {
   sessionStorage.showInvite = '1';
   location.hash = 'r=' + code.toUpperCase(); location.reload();
 }
-function showInvite() {
+function setPane(join) {
+  card.classList.toggle('join', join);
+  document.getElementById('to-join').classList.toggle('on', join);
+  document.getElementById('to-invite').classList.toggle('on', !join);
+}
+function showInvite(pane) {
   // 默认面按角色习惯:手机多为加入方(扫码),桌面多为邀请方(出码)
-  const joinFirst = myKind === 'mobile' && !urlRoom;
-  if (!urlRoom && !joinFirst) {
-    // 桌面出码需要先有组队房:生成码进房,刷新后自动弹回本层
+  const join = pane ? pane === 'join' : (myKind === 'mobile' && !urlRoom);
+  if (!join && !urlRoom) {
+    // 出码需要先有组队房:生成码进房,刷新后自动弹回本层
     enterRoom(Math.random().toString(36).slice(2, 7).replace(/[01oil]/g, 'x'));
     return;
   }
-  card.classList.toggle('join', joinFirst);
+  setPane(join);
   if (urlRoom) {
     const qr = document.getElementById('qr'); qr.innerHTML = '';
-    new QRCode(qr, { text: inviteUrl(), width: 172, height: 172, correctLevel: QRCode.CorrectLevel.M });
+    new QRCode(qr, { text: inviteUrl(), width: 168, height: 168, correctLevel: QRCode.CorrectLevel.M });
     document.getElementById('room-label').innerHTML =
-      `<small>${t('room')}</small>` + urlRoom.split('').join(' ');
+      `<small>${t('room')}</small><b>${urlRoom}</b>`;
   }
   document.getElementById('mask').classList.add('show');
 }
-document.getElementById('to-join').onclick = () => card.classList.add('join');
+document.getElementById('to-join').onclick = () => setPane(true);
 document.getElementById('to-invite').onclick = () => {
-  if (!urlRoom) { // 出码需要先有组队房:生成码进房,刷新后自动弹回本层
-    enterRoom(Math.random().toString(36).slice(2, 7).replace(/[01oil]/g, 'x'));
-    return;
-  }
-  card.classList.remove('join');
+  if (!urlRoom) { enterRoom(Math.random().toString(36).slice(2, 7).replace(/[01oil]/g, 'x')); return; }
+  setPane(false);
 };
 document.getElementById('close-btn').onclick = () => document.getElementById('mask').classList.remove('show');
 document.getElementById('mask').onclick = e => { if (e.target.id === 'mask') e.target.classList.remove('show'); };
@@ -254,6 +266,17 @@ function stopScan() {
 document.getElementById('scan-btn').onclick = startScan;
 document.getElementById('scan-cancel').onclick = stopScan;
 
+/* 空态引导(M1)与顶栏/中栏入口 */
+document.getElementById('hero-scan').onclick = startScan;
+document.getElementById('scan-top').onclick = startScan;
+document.querySelector('#hero .alt a[data-act=code]').onclick = () => {
+  showInvite('join'); setTimeout(() => codeInput.focus(), 100);
+};
+document.querySelector('#hero .alt a[data-act=qr]').onclick = () => showInvite('invite');
+const dlPlus = document.getElementById('dl-plus'), dlInvite = document.getElementById('dl-invite');
+if (dlPlus) dlPlus.onclick = () => showInvite();
+if (dlInvite) dlInvite.onclick = () => showInvite();
+
 /* ── 信令连接 ── */
 let ws, peers = new Map(); // id -> {name, ua, pc, dc, sendQueue, recving}
 function connect() {
@@ -290,6 +313,7 @@ function connect() {
 }
 
 function renderPeers() {
+  // 移动:横向设备条
   peersBar.innerHTML = `<div class="peer self"><div class="pa">${avatarSvg(myKind, true)}<div class="dot on"></div></div>
     <div class="pn">${esc(myName)}</div></div>`;
   for (const [id, p] of peers) {
@@ -300,16 +324,31 @@ function renderPeers() {
       <div class="pn">${esc(p.name)}</div>`;
     peersBar.appendChild(el);
   }
-  // "+"邀请入口(微信群加人心智):自动发现失灵时扫码组队
   const inv = document.createElement('div');
   inv.className = 'peer invite';
   inv.innerHTML = `<div class="pa">+</div><div class="pn">${t('invite')}</div>`;
   inv.onclick = showInvite;
   peersBar.appendChild(inv);
-  if (peers.size === 0) {
-    const e = document.createElement('div'); e.id = 'empty'; e.textContent = t('only_you');
-    peersBar.appendChild(e);
+
+  // 桌面:中栏设备列表(设计 D1:本机行高亮+状态文字)
+  const dl = document.getElementById('dl-items');
+  if (dl) {
+    dl.innerHTML = `<div class="dl-row selfrow"><div class="pa">${avatarSvg(myKind, true)}<div class="dot on"></div></div>
+      <div class="di"><div class="dn">${esc(myName)}</div><div class="ds">${t('self_tag')}</div></div></div>`;
+    for (const [id, p] of peers) {
+      const on = p.dc && p.dc.readyState === 'open';
+      const row = document.createElement('div');
+      row.className = 'dl-row';
+      row.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false)}
+        <div class="dot${on ? ' on' : ''}"></div></div>
+        <div class="di"><div class="dn">${esc(p.name)}</div>
+        <div class="ds${on ? ' on' : ''}">${t(on ? 'st_on' : 'st_mid')}</div></div>`;
+      dl.appendChild(row);
+    }
   }
+
+  // 空态引导(M1):网内只有自己时显示
+  document.getElementById('hero').classList.toggle('show', peers.size === 0);
 }
 
 /* ── WebRTC mesh ── */
@@ -440,6 +479,7 @@ function sendFile(file) {
   const ui = addFileBubble({ name: file.name, size: file.size, ts }, true);
   saveMsg({ type: 'file', from: myName, me: 1, name: file.name, size: file.size, ts });
   if (!tg.length) { ui.fail(); sysLine(t('only_you')); return; }
+  ui.to(tg.map(p => p.name).join(' · '));   // 送达状态行:接收方名单(设计 D1)
   let doneCount = 0;
   tg.forEach(p => {
     p.queue.push({ kind: 'file', file, ts,
