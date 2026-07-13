@@ -176,6 +176,18 @@
   body.dragging #drophint { display:flex; }
   #drophint-box { padding:22px 34px; border:2.5px dashed var(--brand); border-radius:16px;
     background:var(--panel); color:var(--brand); font-size:16px; font-weight:600; }
+  #conv-star.on { color:#f5b301; }
+  #conv-star.on svg path { fill:#f5b301; stroke:#f5b301; }
+  .star-in { color:#f5b301; font-size:.86em; }
+  #pinmask { position:fixed; inset:0; z-index:70; display:none; background:rgba(10,12,14,.42); align-items:center; justify-content:center; }
+  #pinmask.show { display:flex; }
+  #pin-card { background:var(--card); border-radius:var(--r-modal); padding:22px 24px; width:290px; text-align:center; box-shadow:0 16px 48px rgba(10,12,14,.28); }
+  #pin-card h3 { font-size:15px; font-weight:600; margin-bottom:14px; }
+  #pin-input { width:100%; border:1.5px solid var(--line); border-radius:10px; height:46px; box-sizing:border-box;
+    background:var(--card); color:var(--ink); text-align:center; font-size:18px; letter-spacing:8px; outline:none; margin-bottom:14px; }
+  #pin-input:focus { border-color:var(--brand); }
+  .pin-btns { display:flex; gap:10px; }
+  .pin-btns .block { margin:0; }
 
   footer { background:var(--panel); border-top:.5px solid var(--line); padding:8px 10px;
            padding-bottom:calc(8px + env(safe-area-inset-bottom)); flex:none; }
@@ -246,13 +258,15 @@
             align-items:center; justify-content:center; }
   #idmask.show { display:flex; }
   #id-card { background:var(--card); border-radius:var(--r-modal); padding:24px 26px 16px;
-             width:312px; text-align:center; position:relative; box-shadow:0 16px 48px rgba(10,12,14,.28); }
+             width:312px; text-align:center; position:relative; box-shadow:0 16px 48px rgba(10,12,14,.28);
+             max-height:90vh; overflow-y:auto; }
   #id-av { width:64px; height:64px; margin:0 auto 12px; }
   #id-av svg { width:100%; height:100%; }
   #id-card h3 { font-size:17px; font-weight:700; margin-bottom:14px; }
-  #id-name { width:100%; border:1.5px solid var(--line); border-radius:10px; height:44px;
+  #id-name, #id-pin { width:100%; border:1.5px solid var(--line); border-radius:10px; height:44px; box-sizing:border-box;
              background:var(--card); color:var(--ink); text-align:center; font-size:16px; outline:none; }
-  #id-name:focus { border-color:var(--brand); }
+  #id-pin { letter-spacing:6px; }
+  #id-name:focus, #id-pin:focus { border-color:var(--brand); }
   .id-label { font-size:12px; color:var(--ink-3); text-align:left; margin:16px 0 8px; }
   #id-swatches { display:flex; gap:10px; justify-content:center; margin-bottom:6px; }
   .id-sw { width:34px; height:34px; border-radius:9px; cursor:pointer; border:2.5px solid transparent; }
@@ -401,6 +415,9 @@
   </div>
   <div class="title" data-i18n="app_title"></div>
   <div class="hside r">
+    <button id="conv-star" style="display:none" aria-label="favorite" title="">
+      <svg viewBox="0 0 24 24" width="21" height="21"><path d="M12 3.5l2.6 5.3 5.9.9-4.2 4.1 1 5.8L12 17l-5.3 2.6 1-5.8-4.2-4.1 5.9-.9z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+    </button>
     <button id="scan-top" title="">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 8V5a2 2 0 012-2h3M16 3h3a2 2 0 012 2v3M21 16v3a2 2 0 01-2 2h-3M8 21H5a2 2 0 01-2-2v-3M7 12h10"/></svg>
     </button>
@@ -486,9 +503,20 @@
   <input id="id-name" maxlength="20" autocomplete="off">
   <div class="id-label" data-i18n="pick_color"></div>
   <div id="id-swatches"></div>
+  <div class="id-label" data-i18n="pin_label"></div>
+  <input id="id-pin" inputmode="numeric" maxlength="6" autocomplete="off" autocapitalize="off">
+  <div class="modal-note" data-i18n="pin_hint"></div>
   <button id="id-save" class="block primary" data-i18n="save_broadcast"></button>
   <div class="modal-note" data-i18n="id_sync_note"></div>
   <button id="id-close">✕</button>
+</div></div>
+<div id="pinmask"><div id="pin-card">
+  <h3 id="pin-title"></h3>
+  <input id="pin-input" inputmode="numeric" maxlength="6" autocomplete="off" autocapitalize="off">
+  <div class="pin-btns">
+    <button id="pin-cancel" class="block minor" data-i18n="cancel"></button>
+    <button id="pin-ok" class="block primary" data-i18n="ok"></button>
+  </div>
 </div></div>
 <script src="i18n.js"></script>
 <script src="qrcode.min.js"></script>

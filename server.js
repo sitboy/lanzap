@@ -56,7 +56,7 @@ wss.on('connection', (ws, req) => {
   const autoKey = roomKey(req);
   let room = null, key = null, peerId = null;
 
-  const peersInfo = () => [...room.entries()].map(([id, s]) => ({ id, name: s._name, ua: s._ua, hue: s._hue, slot: s._slot }));
+  const peersInfo = () => [...room.entries()].map(([id, s]) => ({ id, name: s._name, ua: s._ua, hue: s._hue, slot: s._slot, fp: s._fp }));
   // 头像调色板槽位:给每台设备分房内最小空闲槽(离开即腾出、复用),客户端据此取精选色,不撞色也不乱
   const pickSlot = () => { const used = new Set(); for (const s of room.values()) if (s._slot != null) used.add(s._slot);
                            let i = 0; while (used.has(i)) i++; return i; };
@@ -87,6 +87,7 @@ wss.on('connection', (ws, req) => {
       ws._name = String(m.name || '设备').slice(0, 40);
       ws._ua = String(m.ua || '').slice(0, 20);
       ws._hue = (typeof m.hue === 'number' && m.hue >= 0 && m.hue < 360) ? m.hue : undefined;
+      ws._fp = String(m.fp || '').slice(0, 40) || undefined;   // 持久设备指纹:客户端 localStorage 稳定值,用于收藏/信任(仅中转)
       // 同 id 重连:顶掉旧连接,并沿用它原来的槽位(颜色不变);新设备取最小空闲槽
       const old = room.get(peerId);
       ws._slot = (old && old._slot != null) ? old._slot : pickSlot();
@@ -98,7 +99,7 @@ wss.on('connection', (ws, req) => {
       ws.send(JSON.stringify({ type: 'peers', you: peerId, slot: ws._slot,
         room: manual ? m.room : roomCode(key), manual,
         peers: peersInfo().filter(p => p.id !== peerId) }));
-      broadcast({ type: 'peer-joined', peer: { id: peerId, name: ws._name, ua: ws._ua, hue: ws._hue, slot: ws._slot } }, peerId);
+      broadcast({ type: 'peer-joined', peer: { id: peerId, name: ws._name, ua: ws._ua, hue: ws._hue, slot: ws._slot, fp: ws._fp } }, peerId);
     } else if (m.type === 'rename' && peerId) {
       ws._name = String(m.name || '').slice(0, 40) || ws._name;
       if (typeof m.hue === 'number' && m.hue >= 0 && m.hue < 360) ws._hue = m.hue;

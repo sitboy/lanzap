@@ -46,6 +46,8 @@ zh: {
   invite_note:'对方点「组队 → 扫码/加入」扫这个码即可加入',
   room_name_hint:'房间名 · 各设备用同一个,可自定义', join_note:'房码在对方的「组队」弹层里',
   create_room:'创建私密房间', back_to_local:'返回本网', room_auto_hint:'同一 WiFi 的设备已自动出现，无需组队。组队用于连接不同网络、或被路由器隔离的设备。', drop_hint:'松开即发送到当前会话',
+  trust_device:'信任此设备', trusted:'已信任（发文件免接收码）',
+  pin_label:'接收码（可选）', pin_hint:'设了之后，别人私聊发你文件要先输这个码；信任的设备免码。留空=关闭。', enter_pin:'输入 {name} 的接收码', pin_wrong:'{name} 的接收码不对，重新发送再试', ok:'确定',
 },
 'zh-TW': {
   this_network:'本網', edit_identity:'這台裝置', pick_color:'換個顏色', save_broadcast:'儲存並廣播', id_sync_note:'修改後即時同步給房間裡的其他裝置', you_shared:'你分享了', shared:'分享了', download:'下載', cancel:'取消', downloading:'下載中', saved_to:'已儲存到下載', open:'開啟', save_as:'另存新檔', sender_gone:'分享者已離開，無法取得', keep_open:'保持此頁面開啟才能提供下載', downloaded_by:'已被 {n} 人下載', no_downloads_yet:'等待有人下載', leave_clear:'退出組隊 / 清除本機紀錄', clear_confirm:'要清除本機聊天紀錄嗎？此操作無法復原。',
@@ -70,6 +72,8 @@ zh: {
   invite_note:'對方點「組隊 → 掃碼/加入」掃這個碼即可加入',
   room_name_hint:'房間名 · 各裝置用同一個,可自訂', join_note:'房碼在對方的「組隊」視窗裡',
   create_room:'建立私密房間', back_to_local:'返回本網', room_auto_hint:'同一 WiFi 的裝置已自動出現，無需組隊。組隊用於連接不同網路、或被路由器隔離的裝置。', drop_hint:'放開即傳送到目前對話',
+  trust_device:'信任此裝置', trusted:'已信任（傳檔免接收碼）',
+  pin_label:'接收碼（選填）', pin_hint:'設定後，別人私聊傳你檔案要先輸入此碼；信任的裝置免碼。留空＝關閉。', enter_pin:'輸入 {name} 的接收碼', pin_wrong:'{name} 的接收碼不對，重新傳送再試', ok:'確定',
   save:'儲存', received:'已接收', sent_ok:'已傳送',
 },
 en: {
@@ -96,6 +100,9 @@ en: {
   invite_note:'On their device: Pair → Scan / Join → scan this code',
   room_name_hint:'Room name · same on all your devices, editable', join_note:'The room code is on the other device’s Pair sheet',
   create_room:'Create private room', back_to_local:'Back to local network', room_auto_hint:'Devices on the same Wi-Fi appear automatically — no pairing needed. Use Team up to reach devices on another network or isolated by the router.', drop_hint:'Drop to send to this chat',
+  trust_device:'Trust this device', trusted:'Trusted (no PIN needed to send)',
+  pin_label:'Receive PIN (optional)', pin_hint:'When set, others must enter this PIN to send you files privately; trusted devices skip it. Empty = off.', enter_pin:"Enter {name}'s PIN",
+  pin_wrong:"Wrong PIN for {name} — resend to try again", ok:"OK",
 },
 es: {
   stuck_hint:'Se detectó un dispositivo en tu red, pero no se puede conectar — probablemente por aislamiento de clientes (AP) o una red de invitados en el router, o porque ambos están en bandas distintas. Prueba: conectarte a la misma Wi-Fi, desactivar la red de invitados, o emparejar directamente con Equipo → Escanear.', this_network:'Esta red', edit_identity:'Este dispositivo', pick_color:'Elegir un color', save_broadcast:'Guardar y difundir', id_sync_note:'Se sincroniza en vivo con los demás en la sala', you_shared:'Compartiste', shared:'compartió', download:'Descargar', cancel:'Cancelar', downloading:'Descargando', saved_to:'Guardado en Descargas', open:'Abrir', save_as:'Guardar como', save:'Guardar', received:'Recibido', sent_ok:'Enviado', sender_gone:'El remitente se fue — ya no disponible', keep_open:'Mantén esta página abierta para poder compartirlo', downloaded_by:'Descargado por {n}', no_downloads_yet:'Esperando descargas', leave_clear:'Salir de la sala / borrar historial', clear_confirm:'¿Borrar el historial de chat local? Esta acción no se puede deshacer.', create_room:'Crear sala privada', back_to_local:'Volver a la red local', room_auto_hint:'Los dispositivos en la misma Wi-Fi aparecen automáticamente, sin necesidad de emparejar. Usa Equipo para conectar con dispositivos en otra red o aislados por el router.', drop_hint:'Suelta aquí para enviarlo a esta conversación',
