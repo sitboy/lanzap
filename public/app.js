@@ -355,9 +355,19 @@ if (dlInvite) dlInvite.onclick = () => showInvite();
 
 /* ── 信令连接 ── */
 let ws, peers = new Map(); // id -> {name, ua, pc, dc, sendQueue, recving}
+let connbar;
+function showConnbar(show) {
+  if (!connbar) { connbar = document.createElement('div'); connbar.id = 'connbar';
+    document.getElementById('main').prepend(connbar); }
+  connbar.textContent = t('reconnecting');
+  connbar.classList.toggle('show', show);
+}
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}`);
+  const slow = setTimeout(() => showConnbar(true), 1500);  // 1.5s 没连上才显示,避免闪烁
+  ws.addEventListener('open', () => { clearTimeout(slow); showConnbar(false); });
+  ws.addEventListener('close', () => { clearTimeout(slow); showConnbar(true); });
   ws.onopen = () => ws.send(JSON.stringify({ type: 'hello', id: myId, name: myName,
     room: urlRoom ? urlRoom.toUpperCase() : undefined,
     ua: /iPhone|iPad|Android/.test(navigator.userAgent) ? 'mobile' : 'desktop' }));
@@ -405,8 +415,9 @@ function renderPeers() {
   for (const [id, p] of peers) {
     const el = document.createElement('div');
     el.className = 'peer' + (currentConv === id ? ' cur' : '');
+    const dotCls = p.dc && p.dc.readyState === 'open' ? ' on' : (p.stuck ? ' off' : '');
     el.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false)}
-      <div class="dot${p.dc && p.dc.readyState === 'open' ? ' on' : ''}"></div>${badgeHtml(id)}</div>
+      <div class="dot${dotCls}"></div>${badgeHtml(id)}</div>
       <div class="pn">${esc(p.name)}</div>`;
     el.onclick = () => switchConv(id);
     peersBar.appendChild(el);
@@ -441,10 +452,11 @@ function renderPeers() {
       const on = p.dc && p.dc.readyState === 'open';
       const row = document.createElement('div');
       row.className = 'dl-row' + (currentConv === id ? ' cur' : '');
+      const st = on ? 'st_on' : (p.stuck ? 'st_stuck' : 'st_mid');
       row.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false)}
-        <div class="dot${on ? ' on' : ''}"></div>${badgeHtml(id)}</div>
+        <div class="dot${on ? ' on' : (p.stuck ? ' off' : '')}"></div>${badgeHtml(id)}</div>
         <div class="di"><div class="dn">${esc(p.name)}</div>
-        <div class="ds${on ? ' on' : ''}">${t(on ? 'st_on' : 'st_mid')}</div></div>`;
+        <div class="ds${on ? ' on' : (p.stuck ? ' bad' : '')}">${t(st)}</div></div>`;
       row.onclick = () => switchConv(id);
       dl.appendChild(row);
     }
@@ -458,8 +470,16 @@ function renderPeers() {
 /* ── WebRTC mesh ── */
 function addPeer(info, initiator) {
   if (peers.has(info.id)) return;
-  const p = { name: info.name, ua: info.ua, pc: null, dc: null, queue: [], sending: false, recv: null };
+  const p = { name: info.name, ua: info.ua, pc: null, dc: null, queue: [], sending: false, recv: null,
+              stuck: false };
   peers.set(info.id, p);
+  // 10 秒连不上=大概率不同网络(本工具零 STUN,只做局域网直连):明确告知而不是永远转圈
+  p.stuckTimer = setTimeout(() => {
+    if (!p.dc || p.dc.readyState !== 'open') {
+      p.stuck = true; renderPeers();
+      sysLine(t('no_direct', { name: p.name }));
+    }
+  }, 10000);
   const pc = new RTCPeerConnection({ iceServers: [] }); // 纯局域网:host candidates 足够,不依赖外部 STUN
   p.pc = pc;
   pc.onicecandidate = ev => ev.candidate &&
@@ -498,7 +518,7 @@ function setupDC(p, dc, id) {
   p.dc = dc;
   dc.binaryType = 'arraybuffer';
   dc.bufferedAmountLowThreshold = 1024 * 1024;
-  dc.onopen = () => { renderPeers(); pump(p); };
+  dc.onopen = () => { p.stuck = false; clearTimeout(p.stuckTimer); renderPeers(); pump(p); };
   dc.onclose = () => { p.dc = null; renderPeers(); };
   dc.onmessage = ev => {
     if (typeof ev.data === 'string') {
@@ -575,7 +595,13 @@ function sendText() {
   const ts = Date.now();
   const rec = { conv: currentConv, type: 'text', from: myName, me: 1, text, ts };
   pushMsg(rec); addText(rec, true);
-  convTargets().forEach(p => { p.queue.push({ kind: 'text', text, ts, scope: convScope() }); pump(p); });
+  const tg = convTargets();
+  if (!tg.length) {
+    const pp = currentConv !== 'all' && peers.get(currentConv);
+    sysLine(pp ? t('no_direct', { name: pp.name }) : t('only_you'));
+    return;
+  }
+  tg.forEach(p => { p.queue.push({ kind: 'text', text, ts, scope: convScope() }); pump(p); });
 }
 send.onclick = sendText;
 txt.addEventListener('keydown', e => {
@@ -597,7 +623,12 @@ function sendFile(file) {
   const names = tg.map(p => p.name).join(' · ');
   pushMsg({ conv: currentConv, type: 'file', from: myName, me: 1,
             name: file.name, size: file.size, ts, to: names });
-  if (!tg.length) { ui.fail(); sysLine(t('only_you')); return; }
+  if (!tg.length) {
+    ui.fail();
+    const pp = currentConv !== 'all' && peers.get(currentConv);
+    sysLine(pp ? t('no_direct', { name: pp.name }) : t('only_you'));
+    return;
+  }
   ui.to(names);   // 送达状态行:接收方名单(设计 D1)
   let doneCount = 0;
   tg.forEach(p => {
