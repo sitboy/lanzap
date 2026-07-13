@@ -696,14 +696,19 @@ function setupDC(p, dc, id) {
         const rec = { conv: id, type: 'text', from: m.from, fromId: m.fromId, kind: m.fromKind, text: m.text, ts: m.ts };
         pushMsg(rec);
         if (currentConv === id) addText(rec, false); else bumpUnread(id);
-      } else if (m.t === 'offer') {         // 文件通告(gossip):渲染"待下载"卡,可按需拉取
-        if (!markSeen(m.mid)) return;
-        broadcastFrame(m, id);
-        if (m.fromId === myId) return;      // 自己发的通告不重复渲染
+      } else if (m.t === 'offer') {         // 文件通告:群=gossip洪泛,私聊(dm)=只进发送方私聊窗、不转发
         const meta = { fileId: m.fileId, name: m.name, size: m.size, mime: m.mime, ts: m.ts,
                        fromId: m.fromId, from: m.from, kind: m.fromKind, thumb: m.thumb };
-        pushMsg({ conv: 'all', type: 'file', ...meta });
-        if (currentConv === 'all') renderOffer(meta); else bumpUnread('all');
+        if (m.dm) {                         // 私聊通告:直达,归到发送方(id)会话
+          pushMsg({ conv: id, type: 'file', ...meta });
+          if (currentConv === id) renderOffer(meta); else bumpUnread(id);
+        } else {                            // 群通告:去重+转发扩散
+          if (!markSeen(m.mid)) return;
+          broadcastFrame(m, id);
+          if (m.fromId === myId) return;    // 自己发的通告不重复渲染
+          pushMsg({ conv: 'all', type: 'file', ...meta });
+          if (currentConv === 'all') renderOffer(meta); else bumpUnread('all');
+        }
       } else if (m.t === 'pull') {          // 有人要拉我的文件 → 直传给他(不经中继)
         if (m.mid && !markSeen(m.mid)) return;
         if (m.toId !== myId) { if (m.mid) broadcastFrame(m, id); return; }
@@ -820,8 +825,9 @@ fileInput.onchange = () => { [...fileInput.files].forEach(sendFile); fileInput.v
 const myFiles = new Map();     // fileId -> {file, card}  我持有、待人来拉的文件
 const offerCards = new Map();  // fileId -> {card, meta, timer}  我收到的可拉取通告
 
-// 发文件=只贴通告(gossip),文件留本机等人来拉;图片附一张小缩略图,原图仍按需拉
+// 发文件=贴通告,文件留本机等人来拉。群聊=gossip 洪泛;私聊=只发给对方那台(不进群)
 async function sendFile(file) {
+  const conv = currentConv;                 // 捕获当前会话:'all'=群 / peerId=私聊
   const ts = Date.now();
   const fileId = 'f' + Math.random().toString(36).slice(2, 10);
   const thumb = isImg(file.name) ? await makeThumb(file).catch(() => null) : null;
@@ -829,9 +835,15 @@ async function sendFile(file) {
                  fromId: myId, from: myName, kind: myKind, thumb };
   const card = fileCard(meta, 'self'); card.selfReceipt();
   myFiles.set(fileId, { file, card });
-  pushMsg({ conv: 'all', type: 'file', me: 1, ...meta });   // 历史(仅元数据+缩略图)
-  const mid = newMid(); markSeen(mid);
-  broadcastFrame({ t: 'offer', mid, ...meta }, null);
+  pushMsg({ conv, type: 'file', me: 1, ...meta });   // 历史归到当前会话
+  if (conv === 'all') {                     // 群:洪泛通告
+    const mid = newMid(); markSeen(mid);
+    broadcastFrame({ t: 'offer', mid, ...meta }, null);
+  } else {                                  // 私聊:只把通告直发给对方那台
+    const p = peers.get(conv);
+    if (p && p.dc && p.dc.readyState === 'open') p.dc.send(JSON.stringify({ t: 'offer', dm: true, ...meta }));
+    else sysLine(t('no_direct', { name: p ? p.name : '' }));
+  }
 }
 // 生成 ~360px JPEG 缩略图(几十 KB,可随通告 gossip);原图不动、仍按需拉
 function makeThumb(file) {
