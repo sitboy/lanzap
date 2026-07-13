@@ -188,6 +188,9 @@
   #pin-input:focus { border-color:var(--brand); }
   .pin-btns { display:flex; gap:10px; }
   .pin-btns .block { margin:0; }
+  .searching-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--brand);
+    margin-right:7px; vertical-align:middle; animation:searchpulse 1.4s ease-in-out infinite; }
+  @keyframes searchpulse { 0%,100%{opacity:.35; transform:scale(.8);} 50%{opacity:1; transform:scale(1.15);} }
 
   footer { background:var(--panel); border-top:.5px solid var(--line); padding:8px 10px;
            padding-bottom:calc(8px + env(safe-area-inset-bottom)); flex:none; }
@@ -433,7 +436,7 @@
     </svg></div>
     <h2 data-i18n="hero_title"></h2>
     <p id="hero-desc"></p>
-    <div class="lonely" data-i18n="only_you"></div>
+    <div class="lonely"><span class="searching-dot"></span><span data-i18n="searching"></span></div>
     <button id="hero-scan">
       <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M3 8V5a2 2 0 012-2h3M16 3h3a2 2 0 012 2v3M21 16v3a2 2 0 01-2 2h-3M8 21H5a2 2 0 01-2-2v-3M7 12h10"/></svg>
       <span data-i18n="hero_scan"></span>

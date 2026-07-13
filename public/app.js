@@ -253,10 +253,12 @@ function renderConv() {
   lastTs = 0;
   msgs.filter(m => (m.conv || 'all') === currentConv).slice(-200).forEach(m => {
     if (m.type === 'text') addText(m, !!m.me);
-    else if (m.me) {                          // 我发过的文件:群=回执(可被拉);私聊=已发送
+    else if (m.me) {                          // 我发过的文件
       const c = fileCard(m, 'self');
-      if ((m.conv || 'all') === 'all') c.selfReceipt(); else c.sent();
-      const info = myFiles.get(m.fileId); if (info) info.card = c;
+      const info = myFiles.get(m.fileId);
+      if (info) { ((m.conv || 'all') === 'all') ? c.selfReceipt() : c.sent(); info.card = c; }  // 还持有=正常
+      else if ((m.conv || 'all') === 'all') c.expired(() => resendFile(m));  // 群通告刷新后失效→重新发送
+      else c.sent();                          // 私聊:已送达,保持"已发送"
     } else if (recvBlobs.has(m.fileId)) {      // 已收下的文件:直接显"已保存"(切走再切回不丢)
       fileCard(m, 'offer').saved(recvBlobs.get(m.fileId));
     } else renderOffer(m);                     // 还没收的:待下载卡(群通告点了才拉;私聊直推会自动收)
@@ -462,6 +464,13 @@ function fileCard(meta, role) {
                         : `<span class="fc-hint">${t('no_downloads_yet')}</span>`;
     },
     addDownloader(id) { if (api._dl && !api._dl.has(id)) { api._dl.set(id, 1); api._renderRecv(); } },
+    // 刷新/重进后本机已不再持有该文件(File 对象丢失)→ 通告失效,给一个"重新发送"入口
+    expired(onResend) {
+      row.querySelector('.bubble.file').classList.add('dim');
+      sizeEl.innerHTML = `${fmtSize(meta.size)} · <span class="fc-hint">${t('offer_expired')}</span>`;
+      act.innerHTML = `<button class="fc-btn ghost">${t('resend')}</button>`;
+      act.querySelector('.fc-btn').onclick = onResend;
+    },
   };
   return api;
 }
@@ -1032,6 +1041,8 @@ plus.onclick = () => fileInput.click();
 const attach = document.getElementById('attach');
 if (attach) attach.onclick = () => fileInput.click();
 fileInput.onchange = () => { [...fileInput.files].forEach(sendFile); fileInput.value = ''; };
+// 重新发送:刷新后原文件字节已丢,切到该会话并重开文件选择器让用户重选一次
+function resendFile(m) { switchConv(m.conv || 'all'); fileInput.click(); }
 
 // 粘贴截图/文件:直接发到当前会话(截图=clipboardData.files 里的 image/*)
 txt.addEventListener('paste', e => {
