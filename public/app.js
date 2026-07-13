@@ -21,11 +21,19 @@ function applyI18n() {
   if (hs) hs.querySelector('span').textContent = t(isDesktopLayout() ? 'hero_qr' : 'hero_scan');
   updateRoomState();
 }
-// 房间状态一行:只在"手动房码房"里显示房码——看见房码=在共享房,看不见=在本网络。干净可讲
+// 房间状态一行:自动房=本网;手动房码房=房间 CODE。看见房码=在共享房,否则在本网络。
 function updateRoomState() {
   $('foot-note').textContent = window.__manual && window.__room
     ? t('direct') + ' · ' + t('room') + ' ' + window.__room
-    : t('direct');
+    : t('direct') + ' · ' + t('this_network');
+}
+// 清空本机聊天记录(阅后即焚/退出销毁)
+function clearHistory() {
+  if (!confirm(t('clear_confirm'))) return;
+  msgs = []; myFiles.clear(); offerCards.clear();
+  if (db) try { db.transaction('msgs', 'readwrite').objectStore('msgs').clear(); } catch {}
+  renderConv();
+  document.getElementById('mask').classList.remove('show');
 }
 
 /* 语言菜单:选择即热切换 */
@@ -212,13 +220,15 @@ function fileCard(meta, role) {
   row.className = 'row filecard' + (mine ? ' me' : '');
   const head = mine ? `<span class="fc-share">↑ ${t('you_shared')}</span>`
                     : `<span class="fc-share">${esc(meta.from || '')} ${t('shared')}</span>`;
+  const thumbHtml = meta.thumb ? `<div class="fc-thumb"><img src="${meta.thumb}"></div>` : '';
   row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (meta.kind || 'mobile'), mine, meta.fromId)}</div>
     <div class="wrap"><div class="dev">${mine ? '' : esc(meta.from || '')}</div>
     <div class="bubble file">
       <div class="fc-head">${head}</div>
+      ${thumbHtml}
       <div class="fmain">
         <div class="finfo"><div class="fname"></div><div class="fsize"></div></div>
-        <div class="ficon">${fileIconSvg(meta.name)}</div></div>
+        <div class="ficon">${meta.thumb ? '' : fileIconSvg(meta.name)}</div></div>
       <div class="fc-act"></div>
     </div></div>`;
   row.querySelector('.fname').textContent = meta.name;
@@ -368,6 +378,7 @@ document.getElementById('copy-btn').onclick = async e => {
   setTimeout(() => { e.target.textContent = t('copy_link'); }, 1500);
 };
 document.getElementById('leave-btn').onclick = leaveRoom;
+{ const cb = document.getElementById('clear-btn'); if (cb) cb.onclick = clearHistory; }
 
 /* 输码加入 */
 const codeInput = document.getElementById('code-input'), codeGo = document.getElementById('code-go');
@@ -625,7 +636,7 @@ function setupDC(p, dc, id) {
         broadcastFrame(m, id);
         if (m.fromId === myId) return;      // 自己发的通告不重复渲染
         const meta = { fileId: m.fileId, name: m.name, size: m.size, mime: m.mime, ts: m.ts,
-                       fromId: m.fromId, from: m.from, kind: m.fromKind };
+                       fromId: m.fromId, from: m.from, kind: m.fromKind, thumb: m.thumb };
         pushMsg({ conv: 'all', type: 'file', ...meta });
         if (currentConv === 'all') renderOffer(meta); else bumpUnread('all');
       } else if (m.t === 'pull') {          // 有人要拉我的文件 → 直传给他(不经中继)
@@ -744,17 +755,33 @@ fileInput.onchange = () => { [...fileInput.files].forEach(sendFile); fileInput.v
 const myFiles = new Map();     // fileId -> {file, card}  我持有、待人来拉的文件
 const offerCards = new Map();  // fileId -> {card, meta, timer}  我收到的可拉取通告
 
-// 发文件=只贴通告(gossip),文件留本机等人来拉
-function sendFile(file) {
+// 发文件=只贴通告(gossip),文件留本机等人来拉;图片附一张小缩略图,原图仍按需拉
+async function sendFile(file) {
   const ts = Date.now();
   const fileId = 'f' + Math.random().toString(36).slice(2, 10);
+  const thumb = isImg(file.name) ? await makeThumb(file).catch(() => null) : null;
   const meta = { fileId, name: file.name, size: file.size, mime: file.type, ts,
-                 fromId: myId, from: myName, kind: myKind };
+                 fromId: myId, from: myName, kind: myKind, thumb };
   const card = fileCard(meta, 'self'); card.selfReceipt();
   myFiles.set(fileId, { file, card });
-  pushMsg({ conv: 'all', type: 'file', me: 1, ...meta });   // 历史(仅元数据)
+  pushMsg({ conv: 'all', type: 'file', me: 1, ...meta });   // 历史(仅元数据+缩略图)
   const mid = newMid(); markSeen(mid);
   broadcastFrame({ t: 'offer', mid, ...meta }, null);
+}
+// 生成 ~360px JPEG 缩略图(几十 KB,可随通告 gossip);原图不动、仍按需拉
+function makeThumb(file) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file); const im = new Image();
+    im.onload = () => {
+      const s = Math.min(1, 360 / Math.max(im.width, im.height));
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(im.width * s); cv.height = Math.round(im.height * s);
+      cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height);
+      URL.revokeObjectURL(url);
+      try { res(cv.toDataURL('image/jpeg', 0.6)); } catch (e) { rej(e); }
+    };
+    im.onerror = rej; im.src = url;
+  });
 }
 
 // 渲染"待下载"卡 + 绑下载动作

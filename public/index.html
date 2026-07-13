@@ -141,6 +141,9 @@
 
   /* 文件通告卡(5 态) */
   .bubble.file.dim { opacity:.55; }
+  .fc-thumb { padding:0 8px 2px; }
+  .fc-thumb img { width:100%; max-height:200px; object-fit:cover; border-radius:8px; display:block; }
+  .fc-thumb + .fmain { padding-top:8px; }
   .fc-head { padding:9px 12px 0; font-size:11.5px; color:var(--ink-3); }
   .fc-head .fc-share { }
   .fsize .ok { color:var(--brand); font-weight:500; }
@@ -422,6 +425,7 @@
       <input id="room-name-input" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false"></div>
     <button id="copy-btn" class="block minor" data-i18n="copy_link"></button>
     <button id="leave-btn" class="block" data-i18n="leave_room"></button>
+    <button id="clear-btn" class="block" data-i18n="leave_clear"></button>
     <div class="modal-note" data-i18n="invite_note"></div>
   </div>
   <div id="pane-join">
