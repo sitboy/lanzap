@@ -21,8 +21,12 @@ const server = http.createServer((req, res) => {
   fs.createReadStream(fp).pipe(res);
 });
 
-// rooms: ip -> Map<peerId, ws>
+// rooms: key -> Map<peerId, ws>
 const rooms = new Map();
+// DoS 护栏:信令都是小 JSON,房间是局域网规模;超限直接拒绝,防内存被灌爆
+const MAX_ROOMS = 5000;       // 全局房间数上限
+const MAX_PER_ROOM = 50;      // 单房设备数上限(局域网远达不到)
+const MAX_MSG = 256 * 1024;   // 单条信令上限(WebRTC SDP 通常 <10KB)
 
 function clientIp(req) {
   // X-Real-IP 由 nginx 注入(不可伪造);退 XFF 首段;再退 socket
@@ -47,7 +51,7 @@ function roomCode(key) {
   return h.toString(36).slice(-4).toUpperCase();
 }
 
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ server, maxPayload: MAX_MSG });
 wss.on('connection', (ws, req) => {
   const autoKey = roomKey(req);
   let room = null, key = null, peerId = null;
@@ -66,7 +70,14 @@ wss.on('connection', (ws, req) => {
       const manual = typeof m.room === 'string' && /^[A-Z0-9]{4,8}$/.test(m.room);
       key = manual ? 'code:' + m.room : autoKey;
       room = rooms.get(key);
-      if (!room) { room = new Map(); rooms.set(key, room); }
+      if (!room) {
+        if (rooms.size >= MAX_ROOMS) { ws.close(1013, 'server busy'); return; }
+        room = new Map(); rooms.set(key, room);
+      }
+      // 满员且不是已在房的重连 → 拒绝(重连由下方同 id 顶替处理)
+      if (room.size >= MAX_PER_ROOM && !room.has(String(m.id).slice(0, 40))) {
+        ws.close(1013, 'room full'); return;
+      }
       peerId = String(m.id).slice(0, 40);
       ws._name = String(m.name || '设备').slice(0, 40);
       ws._ua = String(m.ua || '').slice(0, 20);
