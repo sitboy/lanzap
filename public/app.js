@@ -460,6 +460,39 @@ function showConnbar(show) {
   connbar.textContent = t('reconnecting');
   connbar.classList.toggle('show', show);
 }
+/* ── 本地 IP 尽力而为增强 ──
+ * 浏览器多半把 host candidate 混淆成 .local(隐私),读不到就回落;能读到就用本地子网当分房键,
+ * 让"同 WiFi 但代理出口不同"的设备自动重聚。只在"出口分房落单"时触发,不动常规路径。 */
+function readLocalIP() {
+  return new Promise(res => {
+    let done = false; const fin = ip => { if (!done) { done = true; try { pc.close(); } catch {} res(ip); } };
+    let pc;
+    try {
+      pc = new RTCPeerConnection({ iceServers: [] });
+      pc.createDataChannel('x');
+      pc.onicecandidate = e => {
+        if (!e.candidate) return fin(null);
+        const mm = /([0-9]{1,3}(?:\.[0-9]{1,3}){3})/.exec(e.candidate.candidate || e.candidate.address || '');
+        if (mm && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(mm[1])) fin(mm[1]);
+      };
+      pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => fin(null));
+      setTimeout(() => fin(null), 2500);
+    } catch { fin(null); }
+  });
+}
+let lanTried = false;
+function maybeLanReunion() {
+  if (lanTried || window.__manual || window.__lanKey || urlRoom) return;   // 已在房/已试过就不动
+  lanTried = true;
+  setTimeout(async () => {
+    if (visiblePeerCount() > 0 || window.__manual) return;    // 出口分房已找到同伴,无需增强
+    const ip = await readLocalIP();
+    if (!ip) return;                                          // 读不到本地 IP → 老实回落,不做任何事
+    window.__lanKey = 'l' + hashId(ip.split('.').slice(0, 3).join('.')).toString(36).slice(-10);
+    reconnectRoom();                                          // 用本地子网键重连,同子网设备(含代理)汇合
+  }, 6000);
+}
+
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}`);
@@ -468,6 +501,7 @@ function connect() {
   ws.addEventListener('close', () => { clearTimeout(slow); showConnbar(true); });
   ws.onopen = () => ws.send(JSON.stringify({ type: 'hello', id: myId, name: myName,
     room: urlRoom ? urlRoom.toUpperCase() : undefined,
+    lan: window.__lanKey || undefined,     // 尽力而为:读到本地子网就带上,让代理设备同子网重聚
     ua: /iPhone|iPad|Android/.test(navigator.userAgent) ? 'mobile' : 'desktop' }));
   ws.onmessage = async e => {
     const m = JSON.parse(e.data);
@@ -475,6 +509,7 @@ function connect() {
       if (m.room) { window.__room = m.room; window.__manual = !!m.manual; updateRoomState(); }
       for (const p of m.peers) addPeer(p, true);   // 我是后来者:向已在场者发起连接
       renderPeers();
+      maybeLanReunion();                            // 出口分房若落单,尝试用本地子网重聚代理设备
     } else if (m.type === 'peer-joined') {
       // 同 id 重连(如对方刷新页面):销毁残留的旧连接再重建,否则信令会打在死 pc 上
       const stale = peers.get(m.peer.id);

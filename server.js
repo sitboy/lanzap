@@ -68,7 +68,9 @@ wss.on('connection', (ws, req) => {
     if (m.type === 'hello') {
       // {type:hello, id, name, ua, room?} —— room=手动组队码(扫码/链接),覆盖出口 IP 自动分组
       const manual = typeof m.room === 'string' && /^[A-Z0-9]{4,8}$/.test(m.room);
-      key = manual ? 'code:' + m.room : autoKey;
+      // lan = 客户端读到本地子网派生的键(尽力而为):代理设备同子网可借此自动重聚,不受出口 IP 影响
+      const lan = typeof m.lan === 'string' && /^[a-z0-9]{3,16}$/.test(m.lan);
+      key = manual ? 'code:' + m.room : (lan ? 'lan:' + m.lan : autoKey);
       room = rooms.get(key);
       if (!room) {
         if (rooms.size >= MAX_ROOMS) { ws.close(1013, 'server busy'); return; }
