@@ -57,8 +57,10 @@ document.addEventListener('click', e => {
 });
 
 /* ── 设备身份 ── */
-let myId = localStorage.deviceId;
-if (!myId) { myId = 'd' + Math.random().toString(36).slice(2, 10); localStorage.deviceId = myId; }
+// deviceId 按标签页(sessionStorage):刷新保留、每个窗口/标签独立、不再和别的窗口同 id 互踢。
+// deviceName 仍按浏览器(localStorage):你起的名字跨会话记住。
+let myId = sessionStorage.deviceId;
+if (!myId) { myId = 'd' + Math.random().toString(36).slice(2, 10); sessionStorage.deviceId = myId; }
 let myName = localStorage.deviceName;
 if (!myName) {
   const ua = navigator.userAgent;
