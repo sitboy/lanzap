@@ -177,10 +177,12 @@
   #qr { display:flex; justify-content:center; margin-bottom:12px; }
   #qr img, #qr canvas { border-radius:8px; background:#fff; padding:6px; }
   #room-label { margin-bottom:16px; }
-  #room-label small { display:block; font-size:11px; color:var(--ink-3); letter-spacing:1px;
-                      margin-bottom:3px; }
-  #room-label b { font-size:26px; font-weight:800; letter-spacing:8px; color:var(--ink);
-                  font-variant-numeric:tabular-nums; }
+  #room-label small { display:block; font-size:11px; color:var(--ink-3); letter-spacing:.5px;
+                      margin-bottom:5px; }
+  #room-name-input { width:100%; text-align:center; border:none; background:transparent;
+    font-size:26px; font-weight:800; letter-spacing:6px; color:var(--ink); outline:none;
+    text-transform:uppercase; border-bottom:2px dashed var(--line); padding:2px 0 5px; }
+  #room-name-input:focus { border-bottom-color:var(--brand); }
   #invite-card button.block { display:block; width:100%; border:none; border-radius:10px;
     height:44px; font-size:15px; cursor:pointer; margin-top:10px; }
   #invite-card .primary { background:linear-gradient(150deg,var(--brand-hi),var(--brand-2));
@@ -392,7 +394,8 @@
   </div>
   <div id="pane-invite">
     <div id="qr"></div>
-    <div id="room-label"></div>
+    <div id="room-label"><small data-i18n="room_name_hint"></small>
+      <input id="room-name-input" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false"></div>
     <button id="copy-btn" class="block minor" data-i18n="copy_link"></button>
     <button id="leave-btn" class="block" data-i18n="leave_room"></button>
     <div class="modal-note" data-i18n="invite_note"></div>

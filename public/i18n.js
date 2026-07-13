@@ -40,7 +40,8 @@ zh: {
   scan_tip:'对准另一台设备屏幕上的二维码', camera_fail:'打不开摄像头，请允许相机权限后重试',
   code_placeholder:'或输入房间码', join:'加入', copy_link:'复制链接', copied:'已复制 ✓',
   leave_room:'退出组队', room:'房间', team_room:'组队房',
-  invite_note:'对方点「组队 → 扫码/加入」扫这个码即可加入', join_note:'房码在对方的「组队」弹层里',
+  invite_note:'对方点「组队 → 扫码/加入」扫这个码即可加入',
+  room_name_hint:'房间名 · 各设备用同一个,可自定义', join_note:'房码在对方的「组队」弹层里',
 },
 'zh-TW': {
   app_title:'近傳', hero_title:'同一 WiFi，打開即傳',
@@ -60,7 +61,8 @@ zh: {
   scan_tip:'對準另一台裝置螢幕上的 QR 碼', camera_fail:'無法開啟相機，請允許相機權限後重試',
   code_placeholder:'或輸入房間碼', join:'加入', copy_link:'複製連結', copied:'已複製 ✓',
   leave_room:'退出組隊', room:'房間', team_room:'組隊房',
-  invite_note:'對方點「組隊 → 掃碼/加入」掃這個碼即可加入', join_note:'房碼在對方的「組隊」視窗裡',
+  invite_note:'對方點「組隊 → 掃碼/加入」掃這個碼即可加入',
+  room_name_hint:'房間名 · 各裝置用同一個,可自訂', join_note:'房碼在對方的「組隊」視窗裡',
 },
 en: {
   app_title:'Zap', hero_title:'Same Wi-Fi, open & send',
@@ -80,7 +82,8 @@ en: {
   scan_tip:'Point at the QR code on the other device', camera_fail:'Camera unavailable. Please allow camera access.',
   code_placeholder:'Or enter room code', join:'Join', copy_link:'Copy link', copied:'Copied ✓',
   leave_room:'Leave room', room:'Room', team_room:'Team room',
-  invite_note:'On their device: Pair → Scan / Join → scan this code', join_note:'The room code is on the other device’s Pair sheet',
+  invite_note:'On their device: Pair → Scan / Join → scan this code',
+  room_name_hint:'Room name · same on all your devices, editable', join_note:'The room code is on the other device’s Pair sheet',
 },
 es: {
   app_title:'Zap', hero_title:'Misma Wi-Fi, abre y envía',
@@ -100,7 +103,8 @@ es: {
   scan_tip:'Apunta al código QR del otro dispositivo', camera_fail:'Cámara no disponible. Permite el acceso a la cámara.',
   code_placeholder:'O escribe el código de sala', join:'Unirse', copy_link:'Copiar enlace', copied:'Copiado ✓',
   leave_room:'Salir de la sala', room:'Sala', team_room:'Sala de equipo',
-  invite_note:'En su dispositivo: Emparejar → Escanear / Unirse → escanear este código', join_note:'El código está en la hoja «Emparejar» del otro dispositivo',
+  invite_note:'En su dispositivo: Emparejar → Escanear / Unirse → escanear este código',
+  room_name_hint:'Nombre de sala · igual en tus dispositivos, editable', join_note:'El código está en la hoja «Emparejar» del otro dispositivo',
 },
 pt: {
   app_title:'Zap', hero_title:'Mesmo Wi-Fi, abra e envie',
@@ -120,7 +124,8 @@ pt: {
   scan_tip:'Aponte para o QR code do outro aparelho', camera_fail:'Câmera indisponível. Permita o acesso à câmera.',
   code_placeholder:'Ou digite o código da sala', join:'Entrar', copy_link:'Copiar link', copied:'Copiado ✓',
   leave_room:'Sair da sala', room:'Sala', team_room:'Sala da equipe',
-  invite_note:'No outro aparelho: Parear → Escanear / Entrar → escanear este código', join_note:'O código está na tela «Parear» do outro aparelho',
+  invite_note:'No outro aparelho: Parear → Escanear / Entrar → escanear este código',
+  room_name_hint:'Nome da sala · igual em todos os aparelhos, editável', join_note:'O código está na tela «Parear» do outro aparelho',
 },
 fr: {
   app_title:'Zap', hero_title:'Même Wi-Fi, ouvrez et envoyez',
@@ -140,7 +145,8 @@ fr: {
   scan_tip:'Visez le QR code sur l’autre appareil', camera_fail:'Caméra indisponible. Autorisez l’accès à la caméra.',
   code_placeholder:'Ou saisissez le code de salon', join:'Rejoindre', copy_link:'Copier le lien', copied:'Copié ✓',
   leave_room:'Quitter le salon', room:'Salon', team_room:'Salon d’équipe',
-  invite_note:'Sur l’autre appareil : Associer → Scanner / Rejoindre → scanner ce code', join_note:'Le code se trouve sur l’écran « Associer » de l’autre appareil',
+  invite_note:'Sur l’autre appareil : Associer → Scanner / Rejoindre → scanner ce code',
+  room_name_hint:'Nom du salon · identique sur tous vos appareils, modifiable', join_note:'Le code se trouve sur l’écran « Associer » de l’autre appareil',
 },
 de: {
   app_title:'Zap', hero_title:'Gleiches WLAN, öffnen & senden',
@@ -160,7 +166,8 @@ de: {
   scan_tip:'Auf den QR-Code des anderen Geräts zielen', camera_fail:'Kamera nicht verfügbar. Bitte Kamerazugriff erlauben.',
   code_placeholder:'Oder Raumcode eingeben', join:'Beitreten', copy_link:'Link kopieren', copied:'Kopiert ✓',
   leave_room:'Raum verlassen', room:'Raum', team_room:'Team-Raum',
-  invite_note:'Auf dem anderen Gerät: Koppeln → Scannen / Beitreten → diesen Code scannen', join_note:'Der Code steht im „Koppeln“-Fenster des anderen Geräts',
+  invite_note:'Auf dem anderen Gerät: Koppeln → Scannen / Beitreten → diesen Code scannen',
+  room_name_hint:'Raumname · auf allen Geräten gleich, editierbar', join_note:'Der Code steht im „Koppeln“-Fenster des anderen Geräts',
 },
 it: {
   app_title:'Zap', hero_title:'Stesso Wi-Fi, apri e invia',
@@ -180,7 +187,8 @@ it: {
   scan_tip:'Inquadra il QR code sull’altro dispositivo', camera_fail:'Fotocamera non disponibile. Consenti l’accesso alla fotocamera.',
   code_placeholder:'O inserisci il codice stanza', join:'Entra', copy_link:'Copia link', copied:'Copiato ✓',
   leave_room:'Esci dalla stanza', room:'Stanza', team_room:'Stanza del team',
-  invite_note:'Sull’altro dispositivo: Associa → Scansiona / Entra → scansiona questo codice', join_note:'Il codice è nella schermata «Associa» dell’altro dispositivo',
+  invite_note:'Sull’altro dispositivo: Associa → Scansiona / Entra → scansiona questo codice',
+  room_name_hint:'Nome stanza · uguale su tutti i dispositivi, modificabile', join_note:'Il codice è nella schermata «Associa» dell’altro dispositivo',
 },
 nl: {
   app_title:'Zap', hero_title:'Zelfde wifi, openen & sturen',
@@ -200,7 +208,8 @@ nl: {
   scan_tip:'Richt op de QR-code op het andere apparaat', camera_fail:'Camera niet beschikbaar. Sta cameratoegang toe.',
   code_placeholder:'Of voer de kamercode in', join:'Deelnemen', copy_link:'Link kopiëren', copied:'Gekopieerd ✓',
   leave_room:'Kamer verlaten', room:'Kamer', team_room:'Teamkamer',
-  invite_note:'Op het andere apparaat: Koppelen → Scannen / Deelnemen → deze code scannen', join_note:'De code staat op het „Koppelen”-scherm van het andere apparaat',
+  invite_note:'Op het andere apparaat: Koppelen → Scannen / Deelnemen → deze code scannen',
+  room_name_hint:'Kamernaam · gelijk op al je apparaten, bewerkbaar', join_note:'De code staat op het „Koppelen”-scherm van het andere apparaat',
 },
 ru: {
   app_title:'Zap', hero_title:'Один Wi-Fi — открой и отправь',
@@ -220,7 +229,8 @@ ru: {
   scan_tip:'Наведите на QR-код на другом устройстве', camera_fail:'Камера недоступна. Разрешите доступ к камере.',
   code_placeholder:'Или введите код комнаты', join:'Войти', copy_link:'Копировать ссылку', copied:'Скопировано ✓',
   leave_room:'Покинуть комнату', room:'Комната', team_room:'Командная комната',
-  invite_note:'На другом устройстве: Связать → Сканировать / Войти → отсканировать этот код', join_note:'Код — в окне «Связать» другого устройства',
+  invite_note:'На другом устройстве: Связать → Сканировать / Войти → отсканировать этот код',
+  room_name_hint:'Имя комнаты · одинаковое на всех устройствах, можно менять', join_note:'Код — в окне «Связать» другого устройства',
 },
 ja: {
   app_title:'Zap', hero_title:'同じWi-Fiで、開いてすぐ送信',
@@ -240,7 +250,8 @@ ja: {
   scan_tip:'相手の画面のQRコードに向けてください', camera_fail:'カメラを起動できません。カメラの権限を許可してください。',
   code_placeholder:'またはルームコードを入力', join:'参加', copy_link:'リンクをコピー', copied:'コピーしました ✓',
   leave_room:'ルームを退出', room:'ルーム', team_room:'チームルーム',
-  invite_note:'相手の端末で「ペア → スキャン / 参加」からこのコードを読み取り', join_note:'コードは相手の「ペア」画面にあります',
+  invite_note:'相手の端末で「ペア → スキャン / 参加」からこのコードを読み取り',
+  room_name_hint:'ルーム名 · 全端末で同じ、変更可', join_note:'コードは相手の「ペア」画面にあります',
 },
 ko: {
   app_title:'Zap', hero_title:'같은 Wi-Fi, 열면 바로 전송',
@@ -260,7 +271,8 @@ ko: {
   scan_tip:'상대 기기 화면의 QR 코드에 맞춰 주세요', camera_fail:'카메라를 사용할 수 없습니다. 카메라 권한을 허용해 주세요.',
   code_placeholder:'또는 방 코드 입력', join:'참여', copy_link:'링크 복사', copied:'복사됨 ✓',
   leave_room:'방 나가기', room:'방', team_room:'팀 방',
-  invite_note:'상대 기기에서 페어링 → 스캔 / 참여 → 이 코드를 스캔', join_note:'방 코드는 상대의 「페어링」 창에 있습니다',
+  invite_note:'상대 기기에서 페어링 → 스캔 / 참여 → 이 코드를 스캔',
+  room_name_hint:'방 이름 · 모든 기기에서 동일, 변경 가능', join_note:'방 코드는 상대의 「페어링」 창에 있습니다',
 },
 id: {
   app_title:'Zap', hero_title:'Wi-Fi sama, buka & kirim',
@@ -280,7 +292,8 @@ id: {
   scan_tip:'Arahkan ke kode QR di perangkat lain', camera_fail:'Kamera tidak tersedia. Izinkan akses kamera.',
   code_placeholder:'Atau masukkan kode ruang', join:'Gabung', copy_link:'Salin tautan', copied:'Tersalin ✓',
   leave_room:'Keluar ruang', room:'Ruang', team_room:'Ruang tim',
-  invite_note:'Di perangkat lain: Sambungkan → Pindai / Gabung → pindai kode ini', join_note:'Kode ada di layar «Sambungkan» perangkat lain',
+  invite_note:'Di perangkat lain: Sambungkan → Pindai / Gabung → pindai kode ini',
+  room_name_hint:'Nama ruang · sama di semua perangkat, bisa diubah', join_note:'Kode ada di layar «Sambungkan» perangkat lain',
 },
 vi: {
   app_title:'Zap', hero_title:'Cùng Wi-Fi, mở là gửi',
@@ -300,7 +313,8 @@ vi: {
   scan_tip:'Hướng vào mã QR trên thiết bị kia', camera_fail:'Không mở được camera. Vui lòng cấp quyền camera.',
   code_placeholder:'Hoặc nhập mã phòng', join:'Tham gia', copy_link:'Sao chép liên kết', copied:'Đã sao chép ✓',
   leave_room:'Rời phòng', room:'Phòng', team_room:'Phòng nhóm',
-  invite_note:'Trên thiết bị kia: Ghép nối → Quét / Tham gia → quét mã này', join_note:'Mã phòng ở màn hình «Ghép nối» của thiết bị kia',
+  invite_note:'Trên thiết bị kia: Ghép nối → Quét / Tham gia → quét mã này',
+  room_name_hint:'Tên phòng · giống nhau trên mọi thiết bị, sửa được', join_note:'Mã phòng ở màn hình «Ghép nối» của thiết bị kia',
 },
 th: {
   app_title:'Zap', hero_title:'Wi-Fi เดียวกัน เปิดปุ๊บส่งปั๊บ',
@@ -320,7 +334,8 @@ th: {
   scan_tip:'เล็งไปที่คิวอาร์โค้ดบนอุปกรณ์อีกเครื่อง', camera_fail:'เปิดกล้องไม่ได้ กรุณาอนุญาตการใช้กล้อง',
   code_placeholder:'หรือกรอกรหัสห้อง', join:'เข้าร่วม', copy_link:'คัดลอกลิงก์', copied:'คัดลอกแล้ว ✓',
   leave_room:'ออกจากห้อง', room:'ห้อง', team_room:'ห้องทีม',
-  invite_note:'ที่อีกเครื่อง: จับคู่ → สแกน / เข้าร่วม → สแกนโค้ดนี้', join_note:'รหัสห้องอยู่ในหน้า «จับคู่» ของอีกเครื่อง',
+  invite_note:'ที่อีกเครื่อง: จับคู่ → สแกน / เข้าร่วม → สแกนโค้ดนี้',
+  room_name_hint:'ชื่อห้อง · เหมือนกันทุกเครื่อง แก้ไขได้', join_note:'รหัสห้องอยู่ในหน้า «จับคู่» ของอีกเครื่อง',
 },
 tr: {
   app_title:'Zap', hero_title:'Aynı Wi-Fi, aç ve gönder',
@@ -340,7 +355,8 @@ tr: {
   scan_tip:'Diğer cihazın ekranındaki QR koda tut', camera_fail:'Kamera kullanılamıyor. Lütfen kamera iznini verin.',
   code_placeholder:'Veya oda kodunu gir', join:'Katıl', copy_link:'Bağlantıyı kopyala', copied:'Kopyalandı ✓',
   leave_room:'Odadan ayrıl', room:'Oda', team_room:'Takım odası',
-  invite_note:'Diğer cihazda: Eşleştir → Tara / Katıl → bu kodu tara', join_note:'Kod, diğer cihazın «Eşleştir» ekranında',
+  invite_note:'Diğer cihazda: Eşleştir → Tara / Katıl → bu kodu tara',
+  room_name_hint:'Oda adı · tüm cihazlarda aynı, düzenlenebilir', join_note:'Kod, diğer cihazın «Eşleştir» ekranında',
 },
 pl: {
   app_title:'Zap', hero_title:'Ta sama sieć Wi-Fi — otwórz i wyślij',
@@ -360,7 +376,8 @@ pl: {
   scan_tip:'Wyceluj w kod QR na drugim urządzeniu', camera_fail:'Kamera niedostępna. Zezwól na dostęp do kamery.',
   code_placeholder:'Lub wpisz kod pokoju', join:'Dołącz', copy_link:'Kopiuj link', copied:'Skopiowano ✓',
   leave_room:'Opuść pokój', room:'Pokój', team_room:'Pokój zespołu',
-  invite_note:'Na drugim urządzeniu: Sparuj → Skanuj / Dołącz → zeskanuj ten kod', join_note:'Kod znajdziesz w oknie „Sparuj” drugiego urządzenia',
+  invite_note:'Na drugim urządzeniu: Sparuj → Skanuj / Dołącz → zeskanuj ten kod',
+  room_name_hint:'Nazwa pokoju · taka sama na wszystkich urządzeniach, edytowalna', join_note:'Kod znajdziesz w oknie „Sparuj” drugiego urządzenia',
 },
 hi: {
   app_title:'Zap', hero_title:'एक ही Wi-Fi, खोलें और भेजें',
@@ -380,7 +397,8 @@ hi: {
   scan_tip:'दूसरे डिवाइस की स्क्रीन पर QR कोड पर निशाना लगाएँ', camera_fail:'कैमरा उपलब्ध नहीं। कृपया कैमरा अनुमति दें।',
   code_placeholder:'या रूम कोड डालें', join:'जुड़ें', copy_link:'लिंक कॉपी करें', copied:'कॉपी हो गया ✓',
   leave_room:'रूम छोड़ें', room:'रूम', team_room:'टीम रूम',
-  invite_note:'दूसरे डिवाइस पर: पेयर → स्कैन / जुड़ें → यह कोड स्कैन करें', join_note:'कोड दूसरे डिवाइस की «पेयर» विंडो में है',
+  invite_note:'दूसरे डिवाइस पर: पेयर → स्कैन / जुड़ें → यह कोड स्कैन करें',
+  room_name_hint:'रूम नाम · सभी डिवाइस पर एक जैसा, बदल सकते हैं', join_note:'कोड दूसरे डिवाइस की «पेयर» विंडो में है',
 },
 };
 

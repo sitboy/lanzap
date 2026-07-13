@@ -292,9 +292,21 @@ function enterRoomQuiet(code) {   // 同 enterRoom 但不关弹层(用于"邀请
 function renderInvitePane() {
   const qr = document.getElementById('qr'); qr.innerHTML = '';
   new QRCode(qr, { text: inviteUrl(), width: 168, height: 168, correctLevel: QRCode.CorrectLevel.M });
-  document.getElementById('room-label').innerHTML =
-    `<small>${t('room')}</small><b>${urlRoom}</b>`;
+  const inp = document.getElementById('room-name-input');
+  if (inp && document.activeElement !== inp) inp.value = urlRoom;
 }
+// 房名可自定义:各设备约定同一个名字即永久同房,穿透任何代理/网络(P2P 判本地)
+(function wireRoomNameEdit() {
+  const inp = document.getElementById('room-name-input');
+  if (!inp) return;
+  const commit = () => {
+    const v = inp.value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+    if (v.length >= 4 && v !== urlRoom) { inp.value = v; enterRoomQuiet(v); renderInvitePane(); }
+    else inp.value = urlRoom;
+  };
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } });
+  inp.addEventListener('blur', commit);
+})();
 function showInvite(pane) {
   // 默认面按角色习惯:手机多为加入方(扫码),桌面多为邀请方(出码)
   const join = pane ? pane === 'join' : (myKind === 'mobile' && !urlRoom);
