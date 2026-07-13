@@ -58,18 +58,23 @@ document.addEventListener('click', e => {
 
 /* ── 设备身份 ── */
 // deviceId 按标签页(sessionStorage):刷新保留、每个窗口/标签独立、不再和别的窗口同 id 互踢。
-// deviceName 仍按浏览器(localStorage):你起的名字跨会话记住。
 let myId = sessionStorage.deviceId;
 if (!myId) { myId = 'd' + Math.random().toString(36).slice(2, 10); sessionStorage.deviceId = myId; }
-let myName = localStorage.deviceName;
-if (!myName) {
-  const ua = navigator.userAgent;
-  myName = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad'
-    : /Android/.test(ua) ? ((ua.match(/;\s*([^;)]+?)\s+Build\//) || [,'Android'])[1])
-    : /Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : 'Web';
-  localStorage.deviceName = myName;
-}
 const myKind = /iPhone|iPad|Android/.test(navigator.userAgent) ? 'mobile' : 'desktop';
+
+// id → 稳定哈希(任何节点对同一 id 算出同一头像/颜色,无需服务器存储)
+function hashId(s) { let h = 2166136261; for (let i = 0; i < (s || '').length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+function hueOf(id) { return hashId(id) % 360; }
+// 默认名:设备类型 + id 派生两位后缀(iPhone·K2,天然区分,每标签不同)
+function defaultName(id) {
+  const ua = navigator.userAgent;
+  const base = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad'
+    : /Android/.test(ua) ? ((ua.match(/;\s*([^;)]+?)\s+Build\//) || [, 'Android'])[1])
+    : /Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : 'Web';
+  return base + '·' + hashId(id).toString(36).toUpperCase().slice(-2);
+}
+let myName = localStorage.deviceName || defaultName(myId);
+if (!localStorage.deviceName) localStorage.deviceName = myName;
 document.getElementById('back').onclick = () => switchConv('all');
 $('rename').onclick = () => {
   const n = prompt(t('rename_prompt'), myName);
@@ -140,17 +145,18 @@ const fmtTime = ts => { const d = new Date(ts), now = new Date();
 const isImg = n => /\.(png|jpe?g|gif|webp)$/i.test(n);
 const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
-/* 头像(近传规格):自己=品牌绿渐变,他人=蓝;圆角10;手机/电脑白色线条图形 */
+/* 头像:自己=品牌绿渐变;他人=其 id 派生的独特色相(每台一色,人人算出同一个,无需存储) */
 let _gid = 0;
-function avatarSvg(kind, me) {
+function avatarSvg(kind, me, id) {
   const glyph = kind === 'mobile'
     ? '<rect x="14" y="9" width="12" height="21" rx="2.5" fill="none" stroke="#fff" stroke-width="2"/><circle cx="20" cy="26" r="1.4" fill="#fff"/>'
     : '<rect x="8" y="10" width="24" height="15" rx="2" fill="none" stroke="#fff" stroke-width="2"/><path d="M16 30h8M20 25v5" stroke="#fff" stroke-width="2" stroke-linecap="round"/>';
-  if (!me) return `<svg viewBox="0 0 40 40"><rect width="40" height="40" rx="10" fill="#1485EE"/>${glyph}</svg>`;
-  const id = 'g' + (++_gid);
-  return `<svg viewBox="0 0 40 40"><defs><linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1">
-    <stop offset="0" stop-color="#12C88B"/><stop offset="1" stop-color="#0E9E6E"/></linearGradient></defs>
-    <rect width="40" height="40" rx="10" fill="url(#${id})"/>${glyph}</svg>`;
+  const g = 'g' + (++_gid);
+  const stops = me ? ['#12C88B', '#0E9E6E']
+    : [`hsl(${hueOf(id)},70%,57%)`, `hsl(${hueOf(id)},72%,43%)`];
+  return `<svg viewBox="0 0 40 40"><defs><linearGradient id="${g}" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="${stops[0]}"/><stop offset="1" stop-color="${stops[1]}"/></linearGradient></defs>
+    <rect width="40" height="40" rx="10" fill="url(#${g})"/>${glyph}</svg>`;
 }
 
 /* 文件图标:微信风折角纸+类型色块字母 */
@@ -193,7 +199,7 @@ function addText(m, mine) {
   timeDivider(m.ts);
   const row = document.createElement('div');
   row.className = 'row' + (mine ? ' me' : '');
-  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (m.kind || 'mobile'), mine)}</div><div class="wrap">
+  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (m.kind || 'mobile'), mine, m.fromId)}</div><div class="wrap">
     <div class="dev">${mine ? '' : esc(m.from)}</div><div class="bubble text"></div></div>`;
   row.querySelector('.bubble').textContent = m.text;
   list.appendChild(row); scrollBottom();
@@ -204,7 +210,7 @@ function addFileBubble(meta, mine) {
   timeDivider(meta.ts || Date.now());
   const row = document.createElement('div');
   row.className = 'row' + (mine ? ' me' : '');
-  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (meta.kind || 'mobile'), mine)}</div><div class="wrap">
+  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (meta.kind || 'mobile'), mine, meta.fromId)}</div><div class="wrap">
     <div class="dev">${mine ? '' : esc(meta.from || '')}</div>
     <div class="bubble file"><div class="fmain">
       <div class="finfo"><div class="fname"></div><div class="fsize">${fmtSize(meta.size)}</div></div>
@@ -458,10 +464,11 @@ function renderPeers() {
   selfEl.onclick = () => switchConv('all');
   peersBar.appendChild(selfEl);
   for (const [id, p] of peers) {
+    if (p.stuck) continue;                    // 连不上的(跨网)直接隐去,只露连得上的
     const el = document.createElement('div');
     el.className = 'peer' + (currentConv === id ? ' cur' : '');
-    const dotCls = p.dc && p.dc.readyState === 'open' ? ' on' : (p.stuck ? ' off' : '');
-    el.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false)}
+    const dotCls = p.dc && p.dc.readyState === 'open' ? ' on' : '';   // 连上=绿,连接中=无色
+    el.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false, id)}
       <div class="dot${dotCls}"></div>${badgeHtml(id)}</div>
       <div class="pn">${esc(p.name)}</div>`;
     el.onclick = () => switchConv(id);
@@ -485,7 +492,7 @@ function renderPeers() {
       <path d="M6.5 30c.8-4.4 4.2-7 8-7s7.2 2.6 8 7" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
       <path d="M25 23.4c3.2.3 5.9 2.6 6.6 6.1" fill="none" stroke="#DFF6EC" stroke-width="1.8" stroke-linecap="round"/></svg>
       ${badgeHtml('all')}</div>
-      <div class="di"><div class="dn">${t('all')}</div><div class="ds">${t('devices_title')} · ${peers.size + 1}</div></div>`;
+      <div class="di"><div class="dn">${t('all')}</div><div class="ds">${t('devices_title')} · ${visiblePeerCount() + 1}</div></div>`;
     allRow.onclick = () => switchConv('all');
     dl.appendChild(allRow);
     const selfRow = document.createElement('div');
@@ -494,23 +501,24 @@ function renderPeers() {
       <div class="di"><div class="dn">${esc(myName)}</div><div class="ds">${t('self_tag')}</div></div>`;
     dl.appendChild(selfRow);
     for (const [id, p] of peers) {
+      if (p.stuck) continue;                  // 连不上的隐去
       const on = p.dc && p.dc.readyState === 'open';
       const row = document.createElement('div');
       row.className = 'dl-row' + (currentConv === id ? ' cur' : '');
-      const st = on ? 'st_on' : (p.stuck ? 'st_stuck' : 'st_mid');
-      row.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false)}
-        <div class="dot${on ? ' on' : (p.stuck ? ' off' : '')}"></div>${badgeHtml(id)}</div>
+      row.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false, id)}
+        <div class="dot${on ? ' on' : ''}"></div>${badgeHtml(id)}</div>
         <div class="di"><div class="dn">${esc(p.name)}</div>
-        <div class="ds${on ? ' on' : (p.stuck ? ' bad' : '')}">${t(st)}</div></div>`;
+        <div class="ds${on ? ' on' : ''}">${t(on ? 'st_on' : 'st_mid')}</div></div>`;
       row.onclick = () => switchConv(id);
       dl.appendChild(row);
     }
   }
 
-  // 空态引导(M1):群聊且网内只有自己时显示
-  document.getElementById('hero').classList.toggle('show', peers.size === 0 && currentConv === 'all');
+  // 空态引导(M1):群聊且网内没有连得上的设备时显示
+  document.getElementById('hero').classList.toggle('show', visiblePeerCount() === 0 && currentConv === 'all');
   updateTitle();
 }
+function visiblePeerCount() { let n = 0; for (const [, p] of peers) if (!p.stuck) n++; return n; }
 
 /* ── WebRTC mesh ── */
 function addPeer(info, initiator) {
@@ -518,11 +526,11 @@ function addPeer(info, initiator) {
   const p = { name: info.name, ua: info.ua, pc: null, dc: null, queue: [], sending: false, recv: null,
               stuck: false };
   peers.set(info.id, p);
-  // 10 秒连不上=大概率不同网络(本工具零 STUN,只做局域网直连):明确告知而不是永远转圈
+  // 10 秒连不上=大概率不同网络(本工具零 STUN,只做局域网直连):从列表隐去,不显示僵尸条
   p.stuckTimer = setTimeout(() => {
     if (!p.dc || p.dc.readyState !== 'open') {
-      p.stuck = true; renderPeers();
-      sysLine(t('no_direct', { name: p.name }));
+      p.stuck = true;
+      if (currentConv === info.id) switchConv('all'); else renderPeers();
     }
   }, 10000);
   const pc = new RTCPeerConnection({ iceServers: [] }); // 纯局域网:host candidates 足够,不依赖外部 STUN
@@ -568,11 +576,16 @@ function setupDC(p, dc, id) {
   dc.onmessage = ev => {
     if (typeof ev.data === 'string') {
       const m = JSON.parse(ev.data);
-      if (m.t === 'text') {
-        const conv = m.scope === 'dm' ? id : 'all';
-        const rec = { conv, type: 'text', from: p.name, kind: p.ua, text: m.text, ts: m.ts };
+      if (m.t === 'text') {                 // 群消息:gossip 去重+转发,身份取帧里的原始发送者
+        if (!markSeen(m.mid)) return;
+        const rec = { conv: 'all', type: 'text', from: m.from, fromId: m.fromId, kind: m.fromKind, text: m.text, ts: m.ts };
         pushMsg(rec);
-        if (conv === currentConv) addText(rec, false); else bumpUnread(conv);
+        if (currentConv === 'all') addText(rec, false); else bumpUnread('all');
+        broadcastFrame(m, id);              // 转发给其余邻居(除来源),扩散到全房
+      } else if (m.t === 'dm') {            // 私信:直达,不转发
+        const rec = { conv: id, type: 'text', from: m.from, fromId: m.fromId, kind: m.fromKind, text: m.text, ts: m.ts };
+        pushMsg(rec);
+        if (currentConv === id) addText(rec, false); else bumpUnread(id);
       } else if (m.t === 'meta') {
         const conv = m.scope === 'dm' ? id : 'all';
         p.recv = { meta: { ...m, from: p.name, kind: p.ua }, conv, chunks: [], got: 0,
@@ -634,19 +647,30 @@ function convTargets() {
 }
 const convScope = () => currentConv === 'all' ? 'all' : 'dm';
 
+/* ── gossip:群消息去重+洪泛(小消息才走,大文件不走) ── */
+const seen = new Set(); let msgSeq = 0;
+function newMid() { return myId + ':' + (++msgSeq); }
+function markSeen(mid) { if (!mid || seen.has(mid)) return false; seen.add(mid); if (seen.size > 8000) seen.clear(); return true; }
+function broadcastFrame(obj, exceptId) {   // 发给所有已连邻居(除来源),字符串帧
+  const s = JSON.stringify(obj);
+  for (const [id, p] of peers) if (id !== exceptId && p.dc && p.dc.readyState === 'open') { try { p.dc.send(s); } catch {} }
+}
+
 function sendText() {
   const text = txt.value.trim(); if (!text) return;
   txt.value = ''; txt.dispatchEvent(new Event('input'));
   const ts = Date.now();
-  const rec = { conv: currentConv, type: 'text', from: myName, me: 1, text, ts };
+  const rec = { conv: currentConv, type: 'text', from: myName, fromId: myId, kind: myKind, me: 1, text, ts };
   pushMsg(rec); addText(rec, true);
-  const tg = convTargets();
-  if (!tg.length) {
-    const pp = currentConv !== 'all' && peers.get(currentConv);
-    sysLine(pp ? t('no_direct', { name: pp.name }) : t('only_you'));
-    return;
+  if (currentConv === 'all') {
+    const mid = newMid(); markSeen(mid);   // 群聊:洪泛给所有邻居,靠 gossip 扩散到全房
+    broadcastFrame({ t: 'text', mid, fromId: myId, from: myName, fromKind: myKind, text, ts }, null);
+  } else {                                  // 私聊:只发目标设备,不洪泛
+    const p = peers.get(currentConv);
+    if (p && p.dc && p.dc.readyState === 'open')
+      p.dc.send(JSON.stringify({ t: 'dm', fromId: myId, from: myName, fromKind: myKind, text, ts }));
+    else sysLine(t('no_direct', { name: p ? p.name : '' }));
   }
-  tg.forEach(p => { p.queue.push({ kind: 'text', text, ts, scope: convScope() }); pump(p); });
 }
 send.onclick = sendText;
 txt.addEventListener('keydown', e => {
