@@ -566,6 +566,7 @@ document.getElementById('copy-btn').onclick = async e => {
 };
 document.getElementById('leave-btn').onclick = leaveRoom;
 { const cb = document.getElementById('clear-btn'); if (cb) cb.onclick = clearHistory; }
+{ const ch = document.getElementById('clear-hist'); if (ch) ch.onclick = clearHistory; }   // 工具行的清理聊天记录
 // 页脚房间状态=常驻逃生口:点一下开组队弹层(本网→建房引导;私密房→出码+返回本网),永不被困
 { const fn = $('foot-note'); if (fn) { fn.style.cursor = 'pointer'; fn.onclick = () => showInvite('invite'); } }
 

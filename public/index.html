@@ -194,7 +194,13 @@
 
   footer { background:var(--panel); border-top:.5px solid var(--line); padding:8px 10px;
            padding-bottom:calc(8px + env(safe-area-inset-bottom)); flex:none; }
-  #tools { display:none; }
+  #tools { display:flex; align-items:center; padding:0 2px 5px; }
+  #tools button { border:none; background:none; cursor:pointer; padding:5px 6px; border-radius:6px;
+    color:var(--ink-3); display:flex; align-items:center; gap:5px; font-size:12.5px; }
+  #tools button:hover { background:var(--line); }
+  #tools svg { width:19px; height:19px; }
+  #attach { display:none; }                 /* 移动端用 + 传文件,折角图标隐藏 */
+  #clear-hist { margin-left:auto; }          /* 清理聊天记录:靠右 */
   #irow { display:flex; gap:9px; align-items:flex-end; }
   #txt { flex:1; border:none; border-radius:8px; background:var(--card); padding:9px 12px;
          font-size:16px; resize:none; max-height:110px; outline:none; line-height:1.4;
@@ -370,11 +376,8 @@
     #hero .alt a[data-act=qr] { display:none; }
     .avatar { width:36px; height:36px; border-radius:8px; }
     footer { padding:6px 14px 10px; display:flex; flex-direction:column; }
-    #tools { display:flex; padding:4px 0 2px; gap:2px; }
-    #tools button { border:none; background:none; cursor:pointer; padding:5px;
-      border-radius:6px; color:var(--ink-2); display:flex; }
-    #tools button:hover { background:var(--line); }
-    #tools svg { width:20px; height:20px; }
+    #tools { padding:4px 0 2px; gap:2px; }
+    #attach { display:flex; }               /* 桌面显示折角图标 */
     #irow { flex-direction:column; align-items:stretch; gap:0; }
     #plus { display:none; }
     #txt { background:transparent; border-radius:0; padding:6px 2px; font-size:15px;
@@ -450,6 +453,10 @@
   <div id="tools">
     <button id="attach" title="">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+    </button>
+    <button id="clear-hist" title="">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>
+      <span data-i18n="clear_history"></span>
     </button>
   </div>
   <div id="irow">
