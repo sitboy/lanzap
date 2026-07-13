@@ -1,0 +1,92 @@
+<div align="center">
+
+# Zap
+
+**एक ही Wi‑Fi पर, खोलें और भेजें।**
+
+एक AirDrop जिसे इंस्टॉल नहीं करना पड़ता — बिना लॉगिन वाला ट्रांसफर हेल्पर।
+एक ही नेटवर्क के डिवाइस एक URL खोलते हैं और एक ही चैट में पहुँच जाते हैं; टेक्स्ट और फ़ाइलें
+**peer‑to‑peer जाती हैं और सर्वर को कभी नहीं छूतीं**।
+
+[**Live demo →**](https://file.joestudy.net)
+
+<sub>
+<a href="../README.md">English</a> ·
+<a href="README.zh-CN.md">简体中文</a> ·
+<a href="README.zh-TW.md">繁體中文</a> ·
+<a href="README.es.md">Español</a> ·
+<a href="README.pt.md">Português</a> ·
+<a href="README.fr.md">Français</a> ·
+<a href="README.de.md">Deutsch</a> ·
+<a href="README.it.md">Italiano</a> ·
+<a href="README.nl.md">Nederlands</a> ·
+<a href="README.ru.md">Русский</a> ·
+<a href="README.ja.md">日本語</a> ·
+<a href="README.ko.md">한국어</a> ·
+<a href="README.id.md">Indonesia</a> ·
+<a href="README.vi.md">Tiếng Việt</a> ·
+<a href="README.th.md">ไทย</a> ·
+<a href="README.tr.md">Türkçe</a> ·
+<a href="README.pl.md">Polski</a> ·
+हिन्दी
+</sub>
+
+</div>
+
+---
+
+## विशेषताएं
+
+- 🚀 **कोई ऐप नहीं, कोई लॉगिन नहीं, कॉन्टैक्ट जोड़ने की ज़रूरत नहीं** — बस ब्राउज़र में URL खोलें
+- 🔒 **फ़ाइलें सर्वर को कभी नहीं छूतीं** — डायरेक्ट P2P, कोई साइज़ लिमिट नहीं, कोई दोबारा कंप्रेशन नहीं; सर्वर शून्य डेटा और शून्य लॉग रखता है
+- 👥 **ग्रुप + प्राइवेट चैट** — एक "Everyone" रूम, साथ ही हर डिवाइस के साथ एक प्राइवेट थ्रेड
+- 📷 **जुड़ने के तीन तरीके** — एक ही नेटवर्क पर ऑटोमैटिक डिस्कवरी / पेज के अंदर QR स्कैन / 5-अक्षर का रूम कोड / शेयर करने लायक लिंक
+- 🌍 **18 भाषाएं**, वहीं से बदल सकते हैं; 🌗 **डार्क मोड** सिस्टम को फॉलो करता है
+- 📝 **हिस्ट्री सिर्फ़ आपके ब्राउज़र में रहती है** (IndexedDB) — दूसरे डिवाइसों से अदृश्य
+- 🪶 **कोई फ्रेमवर्क नहीं, कोई बिल्ड नहीं** — सर्वर को सिर्फ़ `ws` चाहिए; फ्रंट एंड सादा vanilla JS है
+
+## सेल्फ़-होस्टिंग
+
+Node ≥ 18 चाहिए।
+
+```bash
+git clone https://github.com/sitboy/lanzap.git zap && cd zap
+npm install
+node server.js          # डिफ़ॉल्ट रूप से :8879 पर सुनता है, PORT से बदलें
+```
+
+इसे रिवर्स प्रॉक्सी के पीछे चलाएं। तीन सख्त ज़रूरतें:
+
+- **HTTPS ज़रूरी है** (ब्राउज़र इसे WebRTC / कैमरा के लिए मांगते हैं)
+- प्रॉक्सी को **WebSocket upgrade** सपोर्ट करना चाहिए
+- प्रॉक्सी को **`X-Real-IP`** पास करना चाहिए (एक ही नेटवर्क के डिवाइसों को ग्रुप करने के लिए इस्तेमाल होता है)
+
+Nginx उदाहरण:
+
+```nginx
+server {
+    server_name your-domain.example;
+    location / {
+        proxy_pass http://127.0.0.1:8879;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 3600s;
+    }
+    # listen 443 ssl; + सर्टिफिकेट (certbot एक ही कमांड में जारी करता है)
+}
+```
+
+## दायरा
+
+शुद्ध LAN डायरेक्ट कनेक्शन (किसी भी तरह का STUN/TURN नहीं), इसलिए ट्रांसफर **सिर्फ़ एक ही नेटवर्क के अंदर** काम करता है। लिंक को अलग-अलग नेटवर्क के बीच खोलने पर भी सब एक ही रूम में आ जाते हैं और एक-दूसरे को देख सकते हैं, लेकिन सीधे कनेक्ट नहीं कर पाते — UI हमेशा घूमते रहने की बजाय ~10 सेकंड बाद यह बात साफ़ बता देता है।
+
+## यह कैसे काम करता है
+
+`server.js` में सिग्नलिंग (`ws`; डिवाइसों को exit IP / IPv6‑64 प्रीफ़िक्स से ग्रुप करता है, मैनुअल रूम कोड इसे ओवरराइड करता है), साथ ही `public/` में फ्रंट एंड (WebRTC mesh, back‑pressure के साथ 64 KB चंकिंग; QR स्कैनिंग पहले `BarcodeDetector` को तरजीह देती है, न मिलने पर jsQR पर वापस चली जाती है)। डिज़ाइन सिस्टम `design/` में है।
+
+## लाइसेंस
+
+[MIT](../LICENSE)

@@ -1,47 +1,67 @@
 <div align="center">
 
-# 近传 · Zap
+# Zap · 近传
 
-**同一 WiFi，打开即传。** — Same Wi‑Fi, open & send.
+**Same Wi‑Fi, open & send.**
 
-不装 App 的隔空传，不用微信的传输助手。
-An AirDrop you don't install, a transfer helper without the login.
+An AirDrop you don't install — a transfer helper without the login.
+Devices on the same network open one URL and land in the same chat; text and files
+go **peer‑to‑peer and never touch the server**.
 
-[**在线体验 / Live demo →**](https://file.joestudy.net)
+[**Live demo →**](https://file.joestudy.net)
+
+<sub>
+English ·
+<a href="docs/README.zh-CN.md">简体中文</a> ·
+<a href="docs/README.zh-TW.md">繁體中文</a> ·
+<a href="docs/README.es.md">Español</a> ·
+<a href="docs/README.pt.md">Português</a> ·
+<a href="docs/README.fr.md">Français</a> ·
+<a href="docs/README.de.md">Deutsch</a> ·
+<a href="docs/README.it.md">Italiano</a> ·
+<a href="docs/README.nl.md">Nederlands</a> ·
+<a href="docs/README.ru.md">Русский</a> ·
+<a href="docs/README.ja.md">日本語</a> ·
+<a href="docs/README.ko.md">한국어</a> ·
+<a href="docs/README.id.md">Indonesia</a> ·
+<a href="docs/README.vi.md">Tiếng Việt</a> ·
+<a href="docs/README.th.md">ไทย</a> ·
+<a href="docs/README.tr.md">Türkçe</a> ·
+<a href="docs/README.pl.md">Polski</a> ·
+<a href="docs/README.hi.md">हिन्दी</a>
+</sub>
 
 </div>
 
 ---
 
-同一网络下的设备，打开同一个网址就**自动出现在同一个会话里**——像用文件传输助手一样互发文字和文件。文字与文件全部走 **WebRTC 点对点直传**，**永远不经过服务器**；服务器只做"介绍人"，牵线后即退场。
+## Features
 
-## 特性
+- 🚀 **No app, no login, no adding contacts** — just open the URL in a browser
+- 🔒 **Files never touch the server** — direct P2P, no size limit, no re‑compression; the server keeps zero data and zero logs
+- 👥 **Group + private chats** — one “Everyone” room plus a private thread with each device
+- 📷 **Three ways to pair** — automatic same‑network discovery / in‑page QR scan / 5‑char room code / shareable link
+- 🌍 **18 languages**, switched in place; 🌗 **dark mode** follows the system
+- 📝 **History lives only in your browser** (IndexedDB) — invisible from other devices
+- 🪶 **Zero framework, zero build** — the server needs only `ws`; the front end is plain vanilla JS
 
-- 🚀 **免装 App、免登录、免加好友**：浏览器打开即用
-- 🔒 **文件不碰服务器**：P2P 直传，不限大小、不压画质，服务器零存储零日志
-- 👥 **群聊 + 私聊**：房间内一个「所有人」群聊 + 每台设备可单独私聊
-- 📷 **组队三通道**：自动同网发现 / 站内扫码 / 5 位房码 / 复制链接
-- 🌍 **18 种语言**，界面原地热切换；🌗 **暗色模式**跟随系统
-- 📝 **历史只存本机浏览器**（IndexedDB），换设备互不可见
-- 🪶 **零框架零构建**：服务端仅依赖 `ws`，前端纯 vanilla
+## Self‑hosting
 
-## 自托管
-
-需要 Node ≥ 18。
+Requires Node ≥ 18.
 
 ```bash
-git clone <this-repo> zap && cd zap
+git clone https://github.com/sitboy/lanzap.git zap && cd zap
 npm install
-node server.js          # 默认监听 :8879，PORT 环境变量可改
+node server.js          # listens on :8879 by default, override with PORT
 ```
 
-生产部署放在反向代理后面，三条硬要求：
+Run it behind a reverse proxy. Three hard requirements:
 
-- **必须 HTTPS**（浏览器对 WebRTC / 摄像头的硬性要求）
-- 反代支持 **WebSocket upgrade**
-- 反代传 **`X-Real-IP`**（自动同网分房依据）
+- **HTTPS is mandatory** (browsers require it for WebRTC / camera)
+- The proxy must support **WebSocket upgrade**
+- The proxy must pass **`X-Real-IP`** (used to group devices on the same network)
 
-Nginx 示例：
+Nginx example:
 
 ```nginx
 server {
@@ -55,17 +75,23 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_read_timeout 3600s;
     }
-    # listen 443 ssl; + 证书（certbot 一键签发）
+    # listen 443 ssl; + certificate (certbot issues one in a single command)
 }
 ```
 
-## 边界
+## Scope
 
-纯局域网直连（不依赖任何 STUN/TURN），因此**只在同一网络内互传**。跨网络打开会进入同一房间、能看见彼此，但无法直连——界面约 10 秒后明确提示，而非无限加载。
+Pure LAN direct connection (no STUN/TURN of any kind), so transfers work **only within the
+same network**. Opening the link across networks still puts everyone in the same room and they
+can see each other, but they cannot connect directly — the UI says so clearly after ~10 s
+instead of spinning forever.
 
-## 技术
+## How it works
 
-信令 `server.js`（`ws`，按出口 IP / IPv6‑64 前缀自动分房，手动房码覆盖）+ 前端 `public/`（WebRTC mesh，64KB 分块 + 背压；扫码 BarcodeDetector 优先、jsQR 兜底）。设计系统见 `design/`。
+Signaling in `server.js` (`ws`; groups devices by egress IP / IPv6‑64 prefix, a manual room
+code overrides this) plus the front end in `public/` (WebRTC mesh, 64 KB chunking with
+back‑pressure; QR scanning prefers `BarcodeDetector` and falls back to jsQR). The design
+system lives in `design/`.
 
 ## License
 
