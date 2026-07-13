@@ -557,10 +557,11 @@ function maybeLanReunion() {
 }
 
 function connect() {
+  if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;   // 已在连/已连:别叠出第二条 ws
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}`);
   const slow = setTimeout(() => showConnbar(true), 1500);  // 1.5s 没连上才显示,避免闪烁
-  ws.addEventListener('open', () => { clearTimeout(slow); showConnbar(false); });
+  ws.addEventListener('open', () => { clearTimeout(slow); showConnbar(false); lastServerMsg = Date.now(); });
   ws.addEventListener('close', () => { clearTimeout(slow); showConnbar(true); });
   ws.onopen = () => ws.send(JSON.stringify({ type: 'hello', id: myId, name: myName,
     room: urlRoom ? urlRoom.toUpperCase() : undefined,
@@ -568,10 +569,19 @@ function connect() {
     hue: myHue != null ? myHue : undefined,
     ua: /iPhone|iPad|Android/.test(navigator.userAgent) ? 'mobile' : 'desktop' }));
   ws.onmessage = async e => {
+    lastServerMsg = Date.now();                     // 任一服务器消息都刷新活性时间戳(僵尸检测用)
     const m = JSON.parse(e.data);
     if (m.type === 'peers') {
       if (m.room) { window.__room = m.room; window.__manual = !!m.manual; updateRoomState(); }
-      for (const p of m.peers) addPeer(p, true);   // 我是后来者:向已在场者发起连接
+      // 按服务器权威名单对账:重连(息屏/切后台归来)后,残留的死连接要拆了重建,活的留着
+      const ids = new Set(m.peers.map(x => x.id));
+      for (const [id, pr] of [...peers]) if (!ids.has(id)) { try { pr.pc && pr.pc.close(); } catch {} peers.delete(id); }
+      for (const pinfo of m.peers) {
+        const ex = peers.get(pinfo.id);
+        if (ex && ex.dc && ex.dc.readyState === 'open') continue;   // 还活着,别动
+        if (ex) { try { ex.pc && ex.pc.close(); } catch {} peers.delete(pinfo.id); }  // 半死/残留→拆
+        addPeer(pinfo, true);                        // (重)连:我向名单里每台发起
+      }
       renderPeers();
       maybeLanReunion();                            // 出口分房若落单,尝试用本地子网重聚代理设备
     } else if (m.type === 'peer-joined') {
@@ -593,6 +603,20 @@ function connect() {
   };
   ws.onclose = () => setTimeout(connect, 2000);
 }
+
+// 移动端自愈:息屏/切后台会冻结定时器、掐 ws、关 DataChannel;切回来可能是"看着 OPEN 实际死"的僵尸。
+// 页面重新可见 / bfcache 恢复 / 网络恢复时,主动判活并整体重连(reconnectRoom 清死连接→按名单重建)。
+let lastServerMsg = 0;
+function onWake() {
+  if (document.visibilityState === 'hidden') return;             // 只在回到前台时自愈
+  const dead = !ws || ws.readyState > 1;                         // CLOSING/CLOSED/无
+  const stale = Date.now() - lastServerMsg > 35000;              // 超一个心跳周期没听到服务器=僵尸
+  if (dead || stale) { showConnbar(true); reconnectRoom(); }
+}
+document.addEventListener('visibilitychange', onWake);
+window.addEventListener('pageshow', e => { if (e.persisted) onWake(); });   // 从 bfcache 恢复
+window.addEventListener('online', onWake);
+window.addEventListener('focus', onWake);
 
 function badgeHtml(conv) {
   const n = unread[conv];
