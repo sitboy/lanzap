@@ -543,6 +543,7 @@ function readLocalIP() {
   });
 }
 let lanTried = false;
+let stuckHintShown = false;   // "同网却连不上"诊断每 session 只提示一次,避免刷屏
 function maybeLanReunion() {
   if (lanTried || window.__manual || window.__lanKey || urlRoom) return;   // 已在房/已试过就不动
   lanTried = true;
@@ -669,10 +670,12 @@ function addPeer(info, initiator) {
   const p = { name: info.name, ua: info.ua, hue: info.hue, pc: null, dc: null, queue: [], sending: false, recv: null,
               stuck: false };
   peers.set(info.id, p);
-  // 10 秒连不上=大概率不同网络(本工具零 STUN,只做局域网直连):从列表隐去,不显示僵尸条
+  // 10 秒连不上:此设备是服务器牵的线(=同出口/同网络),却打洞失败→几乎必是二层被挡
+  // (AP 隔离/访客网络/mDNS)。隐去僵尸条,但给一次可操作诊断,别让用户对着转圈发懵
   p.stuckTimer = setTimeout(() => {
     if (!p.dc || p.dc.readyState !== 'open') {
       p.stuck = true;
+      if (!stuckHintShown) { stuckHintShown = true; sysLine(t('stuck_hint')); }
       if (currentConv === info.id) switchConv('all'); else renderPeers();
     }
   }, 10000);
