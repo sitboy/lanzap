@@ -136,8 +136,32 @@
   .ffoot { border-top:.5px solid var(--line); padding:7px 12px; font-size:12px;
            display:flex; justify-content:space-between; color:var(--ink-3); }
   .ffoot .ok { color:var(--brand); font-weight:500; }
-  .prog { height:3px; background:var(--line); overflow:hidden; }
-  .prog>div { height:100%; background:var(--brand); width:0%; }
+  .prog { height:3px; background:var(--line); overflow:hidden; border-radius:2px; }
+  .prog>div { height:100%; background:var(--brand); width:0%; transition:width .15s; }
+
+  /* 文件通告卡(5 态) */
+  .bubble.file.dim { opacity:.55; }
+  .fc-head { padding:9px 12px 0; font-size:11.5px; color:var(--ink-3); }
+  .fc-head .fc-share { }
+  .fsize .ok { color:var(--brand); font-weight:500; }
+  .fsize .fc-hint { color:var(--ink-3); }
+  .fc-act { border-top:.5px solid var(--line); padding:8px 12px; display:flex; gap:8px; align-items:center; }
+  .fc-act:empty { display:none; }
+  .fc-btn { display:inline-flex; align-items:center; justify-content:center; gap:5px;
+    border:none; border-radius:7px; height:32px; padding:0 14px; font-size:13px; cursor:pointer;
+    flex:1; text-decoration:none; }
+  .fc-btn.go { background:var(--brand); color:#fff; font-weight:500; }
+  .fc-btn.ghost { background:var(--panel); color:var(--ink); border:.5px solid var(--line); }
+  .fc-btn svg { flex:none; }
+  .fc-row { display:flex; justify-content:space-between; align-items:center; width:100%; font-size:12px; }
+  .fc-pct { color:var(--brand); font-weight:500; }
+  .fc-cancel { color:var(--ink-3); cursor:pointer; }
+  .fc-off { color:var(--ink-3); font-size:12.5px; }
+  .fc-recv { display:flex; align-items:center; gap:4px; font-size:11.5px; color:var(--ink-3); }
+  .fc-av { width:18px; height:18px; border-radius:5px; overflow:hidden; display:inline-block; margin-right:-4px; }
+  .fc-av svg { width:100%; height:100%; display:block; }
+  .fc-dln { margin-left:8px; color:var(--brand); font-weight:500; }
+  .fc-act .prog { flex:1; }
 
   .bubble.img { background:none; }
   .bubble.img img { max-width:100%; max-height:270px; border-radius:var(--r-card); display:block; }

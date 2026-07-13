@@ -122,11 +122,10 @@ function renderConv() {
   lastTs = 0;
   msgs.filter(m => (m.conv || 'all') === currentConv).slice(-200).forEach(m => {
     if (m.type === 'text') addText(m, !!m.me);
-    else {
-      const ui = addFileBubble(m, !!m.me);
-      if (m.me && m.to) ui.to(m.to);
-      ui.done(m.blob || null);
-    }
+    else if (m.me) {                          // 我分享过的文件:回执卡(仍可被拉,若文件还在本会话)
+      const c = fileCard(m, 'self'); c.selfReceipt();
+      if (myFiles && myFiles.has(m.fileId)) myFiles.get(m.fileId).card = c;
+    } else renderOffer(m);                     // 别人分享的:待下载卡(点了才拉,发送方在线才成)
   });
   scrollBottom();
 }
@@ -205,51 +204,86 @@ function addText(m, mine) {
   list.appendChild(row); scrollBottom();
 }
 
-// 文件气泡(发送/接收共用,带进度与状态)
-function addFileBubble(meta, mine) {
+// 文件通告卡(5 态状态机):role='self'(我分享的·回执) | 'offer'(别人分享的·可下载)
+function fileCard(meta, role) {
   timeDivider(meta.ts || Date.now());
+  const mine = role === 'self';
   const row = document.createElement('div');
-  row.className = 'row' + (mine ? ' me' : '');
-  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (meta.kind || 'mobile'), mine, meta.fromId)}</div><div class="wrap">
-    <div class="dev">${mine ? '' : esc(meta.from || '')}</div>
-    <div class="bubble file"><div class="fmain">
-      <div class="finfo"><div class="fname"></div><div class="fsize">${fmtSize(meta.size)}</div></div>
-      <div class="ficon">${fileIconSvg(meta.name)}</div></div>
-      <div class="prog"><div></div></div>
-      <div class="ffoot"><span class="fstat">${t(mine ? 'sending' : 'receiving')}</span><span class="fto"></span></div>
+  row.className = 'row filecard' + (mine ? ' me' : '');
+  const head = mine ? `<span class="fc-share">↑ ${t('you_shared')}</span>`
+                    : `<span class="fc-share">${esc(meta.from || '')} ${t('shared')}</span>`;
+  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (meta.kind || 'mobile'), mine, meta.fromId)}</div>
+    <div class="wrap"><div class="dev">${mine ? '' : esc(meta.from || '')}</div>
+    <div class="bubble file">
+      <div class="fc-head">${head}</div>
+      <div class="fmain">
+        <div class="finfo"><div class="fname"></div><div class="fsize"></div></div>
+        <div class="ficon">${fileIconSvg(meta.name)}</div></div>
+      <div class="fc-act"></div>
     </div></div>`;
   row.querySelector('.fname').textContent = meta.name;
+  const sizeEl = row.querySelector('.fsize'), act = row.querySelector('.fc-act');
+  sizeEl.textContent = fmtSize(meta.size);
   list.appendChild(row); scrollBottom();
-  return {
-    prog: p => { row.querySelector('.prog>div').style.width = (p*100).toFixed(1) + '%'; },
-    to: names => { row.querySelector('.fto').textContent = names; },
-    done: blob => {
-      row.querySelector('.prog').remove();
-      const st = row.querySelector('.fstat');
-      st.textContent = t('sent'); st.classList.add('ok');
-      if (blob) { // 接收方:变成可保存/可预览
-        const url = URL.createObjectURL(blob);
-        if (isImg(meta.name)) {
-          row.querySelector('.wrap').innerHTML =
-            `<div class="dev">${esc(meta.from || '')}</div>
-             <a class="bubble img" href="${url}" target="_blank"><img src="${url}"></a>`;
-        } else {
-          const a = document.createElement('a');
-          a.href = url; a.download = meta.name;
-          a.className = 'bubble file'; a.style.display = 'block';
-          a.innerHTML = row.querySelector('.bubble.file').innerHTML;
-          a.querySelector('.fstat').textContent = '⬇ ' + t('click_download');
-          a.querySelector('.fstat').classList.add('ok');
-          a.querySelector('.fto').textContent = fmtSize(meta.size);
-          row.querySelector('.bubble.file').replaceWith(a);
-        }
-        if (nearBottom()) scrollBottom();
-      }
+
+  const api = {
+    // 待下载:显示下载按钮
+    offer(onDownload) {
+      act.innerHTML = `<button class="fc-btn go"><svg viewBox="0 0 20 20" width="15" height="15"><path d="M10 3v9m0 0l-3.5-3.5M10 12l3.5-3.5M4 15h12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>${t('download')}</button>`;
+      act.querySelector('.fc-btn').onclick = onDownload;
     },
-    fail: () => { row.querySelector('.prog>div').style.background = 'var(--danger)';
-                  row.querySelector('.fstat').textContent = t('failed'); },
+    // 下载中:进度+速率+取消
+    downloading(onCancel) {
+      act.innerHTML = `<div class="prog"><div></div></div>
+        <div class="fc-row"><span class="fc-pct">${t('receiving')}</span><a class="fc-cancel">${t('cancel')}</a></div>`;
+      act.querySelector('.fc-cancel').onclick = onCancel;
+    },
+    progress(got, total, speed) {
+      const bar = act.querySelector('.prog>div'); if (bar) bar.style.width = (got/total*100).toFixed(1)+'%';
+      const pct = act.querySelector('.fc-pct');
+      if (pct) pct.textContent = `${t('downloading')} ${Math.round(got/total*100)}%`;
+      sizeEl.textContent = `${fmtSize(got)} / ${fmtSize(total)}${speed ? ' · ' + fmtSize(speed) + '/s' : ''}`;
+    },
+    // 已保存:打开/另存
+    saved(blob) {
+      const url = URL.createObjectURL(blob);
+      sizeEl.innerHTML = `<span class="ok">${t('saved_to')} · ${fmtSize(meta.size)}</span>`;
+      if (isImg(meta.name)) {
+        const wrap = row.querySelector('.wrap');
+        wrap.innerHTML = `<div class="dev">${esc(meta.from || '')}</div>
+          <a class="bubble img" href="${url}" target="_blank"><img src="${url}"></a>`;
+      } else {
+        act.innerHTML = `<a class="fc-btn ghost" href="${url}" target="_blank">${t('open')}</a>
+          <a class="fc-btn ghost" href="${url}" download="${esc(meta.name)}">${t('save_as')}</a>`;
+      }
+      if (nearBottom()) scrollBottom();
+    },
+    // 发送方离线:置灰+不可获取
+    unavailable() {
+      row.querySelector('.bubble.file').classList.add('dim');
+      act.innerHTML = `<span class="fc-off">◷ ${t('sender_gone')}</span>`;
+    },
+    // 自己发出的卡:回执"保持页面开启可供下载" + "已被 N 人下载"
+    selfReceipt() {
+      sizeEl.innerHTML = `${fmtSize(meta.size)} · <span class="fc-hint">${t('keep_open')}</span>`;
+      api._dl = new Map();
+      act.innerHTML = `<div class="fc-recv"></div>`;
+      api._renderRecv();
+    },
+    _renderRecv() {
+      const box = act.querySelector('.fc-recv'); if (!box) return;
+      const n = api._dl ? api._dl.size : 0;
+      const avs = [...(api._dl || new Map()).entries()].slice(0, 5)
+        .map(([id]) => `<span class="fc-av">${avatarSvg('mobile', false, id)}</span>`).join('');
+      box.innerHTML = n ? `${avs}<span class="fc-dln">${t('downloaded_by', { n })}</span>`
+                        : `<span class="fc-hint">${t('no_downloads_yet')}</span>`;
+    },
+    addDownloader(id) { if (api._dl && !api._dl.has(id)) { api._dl.set(id, 1); api._renderRecv(); } },
   };
+  return api;
 }
+// 兼容旧调用名(历史渲染等仍可能用到)
+function addFileBubble(meta, mine) { return fileCard(meta, mine ? 'self' : 'offer'); }
 
 /* ── 组队:状态无状态化——房码只活在地址栏(#r=),不存 localStorage ──
  * 裸链接/新标签/隐私模式 一律回"本网络大房间";带 #r= 的链接才进对应共享房。
@@ -586,56 +620,75 @@ function setupDC(p, dc, id) {
         const rec = { conv: id, type: 'text', from: m.from, fromId: m.fromId, kind: m.fromKind, text: m.text, ts: m.ts };
         pushMsg(rec);
         if (currentConv === id) addText(rec, false); else bumpUnread(id);
-      } else if (m.t === 'meta') {
-        const conv = m.scope === 'dm' ? id : 'all';
-        p.recv = { meta: { ...m, from: p.name, kind: p.ua }, conv, chunks: [], got: 0,
-                   ui: conv === currentConv
-                     ? addFileBubble({ ...m, from: p.name, kind: p.ua }, false) : null };
-      } else if (m.t === 'end' && p.recv) {
-        const r = p.recv; p.recv = null;
-        const blob = new Blob(r.chunks, { type: r.meta.mime || 'application/octet-stream' });
-        const rec = { conv: r.conv, type: 'file', from: p.name, kind: p.ua,
-                      name: r.meta.name, size: r.meta.size, ts: r.meta.ts, blob };
-        pushMsg(rec);
-        if (r.ui) r.ui.done(blob); else bumpUnread(r.conv);
+      } else if (m.t === 'offer') {         // 文件通告(gossip):渲染"待下载"卡,可按需拉取
+        if (!markSeen(m.mid)) return;
+        broadcastFrame(m, id);
+        if (m.fromId === myId) return;      // 自己发的通告不重复渲染
+        const meta = { fileId: m.fileId, name: m.name, size: m.size, mime: m.mime, ts: m.ts,
+                       fromId: m.fromId, from: m.from, kind: m.fromKind };
+        pushMsg({ conv: 'all', type: 'file', ...meta });
+        if (currentConv === 'all') renderOffer(meta); else bumpUnread('all');
+      } else if (m.t === 'pull') {          // 有人要拉我的文件 → 直传给他(不经中继)
+        if (m.mid && !markSeen(m.mid)) return;
+        if (m.toId !== myId) { if (m.mid) broadcastFrame(m, id); return; }
+        const f = myFiles.get(m.fileId); if (!f) return;
+        f.card.addDownloader(m.fromId);
+        streamFileTo({ id: m.fromId, name: m.from, ua: m.fromKind }, f.file, m.fileId);
+      } else if (m.t === 'fmeta') {         // 发送方开始给我发文件了
+        const rec = offerCards.get(m.fileId);
+        if (rec && rec.timer) { clearTimeout(rec.timer); rec.timer = null; }
+        p.incoming = { fileId: m.fileId, meta: m, chunks: [], got: 0, card: rec ? rec.card : null, t0: Date.now() };
+      } else if (m.t === 'fend' && p.incoming && p.incoming.fileId === m.fileId) {
+        const inc = p.incoming; p.incoming = null;
+        const blob = new Blob(inc.chunks, { type: inc.meta.mime || 'application/octet-stream' });
+        if (inc.card) inc.card.saved(blob);
       }
-    } else if (p.recv) {
-      p.recv.chunks.push(ev.data);
-      p.recv.got += ev.data.byteLength;
-      if (p.recv.ui) p.recv.ui.prog(p.recv.got / p.recv.meta.size);
+    } else if (p.incoming) {               // 文件二进制块
+      p.incoming.chunks.push(ev.data);
+      p.incoming.got += ev.data.byteLength;
+      const inc = p.incoming;
+      if (inc.card) inc.card.progress(inc.got, inc.meta.size, inc.got / ((Date.now() - inc.t0) / 1000 || 1));
     }
   };
 }
 
-/* 发送队列:每 peer 串行,尊重背压 */
+/* 发送队列:每 peer 串行(文件流,尊重背压)。文件按 fileId 打标,支持并发拉取串行化 */
 async function pump(p) {
   if (p.sending || !p.dc || p.dc.readyState !== 'open') return;
   const job = p.queue.shift();
   if (!job) return;
   p.sending = true;
   try {
-    if (job.kind === 'text') {
-      p.dc.send(JSON.stringify({ t: 'text', text: job.text, ts: job.ts, scope: job.scope }));
-    } else {
-      p.dc.send(JSON.stringify({ t: 'meta', name: job.file.name, size: job.file.size,
-                                 mime: job.file.type, ts: job.ts, scope: job.scope }));
-      let off = 0;
-      while (off < job.file.size) {
-        if (p.dc.bufferedAmount > HIGH_WATER) {
-          await new Promise(ok => { p.dc.onbufferedamountlow = ok; });
-          continue;
-        }
-        const buf = await job.file.slice(off, off + CHUNK).arrayBuffer();
-        p.dc.send(buf);
-        off += buf.byteLength;
-        job.onprog && job.onprog(off / job.file.size);
-      }
-      p.dc.send(JSON.stringify({ t: 'end' }));
-      job.ondone && job.ondone();
+    p.dc.send(JSON.stringify({ t: 'fmeta', fileId: job.fileId, name: job.file.name,
+                               size: job.file.size, mime: job.file.type }));
+    let off = 0;
+    while (off < job.file.size) {
+      if (p.dc.bufferedAmount > HIGH_WATER) { await new Promise(ok => { p.dc.onbufferedamountlow = ok; }); continue; }
+      const buf = await job.file.slice(off, off + CHUNK).arrayBuffer();
+      p.dc.send(buf); off += buf.byteLength;
     }
-  } catch (e) { job.onfail && job.onfail(); }
+    p.dc.send(JSON.stringify({ t: 'fend', fileId: job.fileId }));
+  } catch (e) { /* 传输失败:接收方会超时,发送方静默 */ }
   p.sending = false;
   pump(p);
+}
+// 按需建连并等 DataChannel open(拉取时对方可能还没直连上)
+function ensurePeer(info) { if (!peers.has(info.id) && ws && ws.readyState === 1) addPeer(info, true); }
+function waitDcOpen(id, ms) {
+  return new Promise(res => {
+    const t0 = Date.now();
+    const iv = setInterval(() => {
+      const p = peers.get(id);
+      if (p && p.dc && p.dc.readyState === 'open') { clearInterval(iv); res(p); }
+      else if (Date.now() - t0 > ms) { clearInterval(iv); res(null); }
+    }, 150);
+  });
+}
+async function streamFileTo(info, file, fileId) {
+  let p = peers.get(info.id);
+  if (!p || !p.dc || p.dc.readyState !== 'open') { ensurePeer(info); p = await waitDcOpen(info.id, 12000); }
+  if (!p) return;                    // 建不起来:拉取方会超时显"无法获取"
+  p.queue.push({ file, fileId }); pump(p);
 }
 
 /* ── 发送入口:群聊=全员,私聊=目标设备 ── */
@@ -686,27 +739,39 @@ plus.onclick = () => fileInput.click();
 const attach = document.getElementById('attach');
 if (attach) attach.onclick = () => fileInput.click();
 fileInput.onchange = () => { [...fileInput.files].forEach(sendFile); fileInput.value = ''; };
+
+/* ── 文件:通告-拉取 ── */
+const myFiles = new Map();     // fileId -> {file, card}  我持有、待人来拉的文件
+const offerCards = new Map();  // fileId -> {card, meta, timer}  我收到的可拉取通告
+
+// 发文件=只贴通告(gossip),文件留本机等人来拉
 function sendFile(file) {
-  const ts = Date.now(), tg = convTargets();
-  const ui = addFileBubble({ name: file.name, size: file.size, ts }, true);
-  const names = tg.map(p => p.name).join(' · ');
-  pushMsg({ conv: currentConv, type: 'file', from: myName, me: 1,
-            name: file.name, size: file.size, ts, to: names });
-  if (!tg.length) {
-    ui.fail();
-    const pp = currentConv !== 'all' && peers.get(currentConv);
-    sysLine(pp ? t('no_direct', { name: pp.name }) : t('only_you'));
-    return;
-  }
-  ui.to(names);   // 送达状态行:接收方名单(设计 D1)
-  let doneCount = 0;
-  tg.forEach(p => {
-    p.queue.push({ kind: 'file', file, ts, scope: convScope(),
-      onprog: r => ui.prog(r),
-      ondone: () => { if (++doneCount === tg.length) ui.done(null); },
-      onfail: () => ui.fail() });
-    pump(p);
+  const ts = Date.now();
+  const fileId = 'f' + Math.random().toString(36).slice(2, 10);
+  const meta = { fileId, name: file.name, size: file.size, mime: file.type, ts,
+                 fromId: myId, from: myName, kind: myKind };
+  const card = fileCard(meta, 'self'); card.selfReceipt();
+  myFiles.set(fileId, { file, card });
+  pushMsg({ conv: 'all', type: 'file', me: 1, ...meta });   // 历史(仅元数据)
+  const mid = newMid(); markSeen(mid);
+  broadcastFrame({ t: 'offer', mid, ...meta }, null);
+}
+
+// 渲染"待下载"卡 + 绑下载动作
+function renderOffer(meta) {
+  const card = fileCard(meta, 'offer');
+  const rec = { card, meta, timer: null };
+  offerCards.set(meta.fileId, rec);
+  card.offer(() => {
+    card.downloading(() => {});                 // 进入下载中
+    const pull = { t: 'pull', fileId: meta.fileId, toId: meta.fromId,
+                   fromId: myId, from: myName, fromKind: myKind };
+    const sp = peers.get(meta.fromId);
+    if (sp && sp.dc && sp.dc.readyState === 'open') sp.dc.send(JSON.stringify(pull));
+    else broadcastFrame({ ...pull, mid: newMid() }, null);   // 不直连发送方就 gossip 路由拉取请求
+    rec.timer = setTimeout(() => card.unavailable(), 9000);  // 9s 无响应=发送方离线
   });
+  return card;
 }
 
 /* ── 桌面边栏 ── */
