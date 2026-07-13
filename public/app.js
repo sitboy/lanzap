@@ -80,8 +80,23 @@ const PALETTE = [BRAND, 210, 265, 28, 330, 188, 45, 300, 240, 355];
 let mySlot = null;
 function slotHue(slot) { return slot == null ? undefined : PALETTE[slot % PALETTE.length]; }
 function myColor() { return myHue != null ? myHue : slotHue(mySlot); }   // 自定义色优先,否则槽位色
+// 头像形状库:每槽位一个独特形状(白色),配上槽位色→形状+颜色双重区分,房内不撞。与 PALETTE 同长
+const GLYPHS = [
+  '<circle cx="20" cy="20" r="7.5" fill="#fff"/>',                                                          // 圆
+  '<path d="M20 11.5 27.8 26 12.2 26Z" fill="#fff"/>',                                                       // 三角
+  '<path d="M20 11 29 20 20 29 11 20Z" fill="#fff"/>',                                                       // 菱形
+  '<path d="M20 11l2.1 6.5h6.9l-5.6 4 2.2 6.6-5.6-4.1-5.6 4.1 2.2-6.6-5.6-4h6.9z" fill="#fff"/>',            // 五角星
+  '<path d="M20 28c-5.6-3.7-8-6.7-8-9.7a4.2 4.2 0 0 1 8-1.6 4.2 4.2 0 0 1 8 1.6c0 3-2.4 6-8 9.7z" fill="#fff"/>', // 心
+  '<path d="M20 11l7.8 4.5v9L20 29l-7.8-4.5v-9z" fill="#fff"/>',                                              // 六边形
+  '<path d="M20 11c4.5 5.6 6.5 8.6 6.5 11.6a6.5 6.5 0 0 1-13 0c0-3 2-6 6.5-11.6z" fill="#fff"/>',            // 水滴
+  '<rect x="12.5" y="12.5" width="15" height="15" rx="4.5" fill="#fff"/>',                                   // 圆角方
+  '<path d="M24.5 11a9 9 0 1 0 0 18 7 7 0 0 1 0-18z" fill="#fff"/>',                                          // 月牙
+  '<path d="M17 12h6v5h5v6h-5v5h-6v-5h-5v-6h5z" fill="#fff"/>',                                               // 十字
+];
+function glyphFor(slot, id) { return GLYPHS[(slot != null ? slot : hashId(id)) % GLYPHS.length]; }
+function peerSlot(id) { const p = peers.get(id); return p ? p.slot : null; }
 function refreshSelfAvatars() {                                          // 槽位到手后刷新自己的头像
-  const sa = document.getElementById('side-avatar'); if (sa) sa.innerHTML = avatarSvg(myKind, true, myId, myColor());
+  const sa = document.getElementById('side-avatar'); if (sa) sa.innerHTML = avatarSvg(myKind, true, myId, myColor(), mySlot);
   renderPeers(); renderConv();
 }
 // 默认名:设备类型 + id 派生两位后缀(iPhone·K2,天然区分,每标签不同)
@@ -103,7 +118,7 @@ let pendingHue = myHue;
 function openIdentity() {
   pendingHue = myHue;
   document.getElementById('id-name').value = myName;
-  document.getElementById('id-av').innerHTML = avatarSvg(myKind, true, myId, pendingHue != null ? pendingHue : slotHue(mySlot));
+  document.getElementById('id-av').innerHTML = avatarSvg(myKind, true, myId, pendingHue != null ? pendingHue : slotHue(mySlot), mySlot);
   const sw = document.getElementById('id-swatches');
   sw.innerHTML = SWATCHES.map(h => {
     const bg = h == null ? 'linear-gradient(150deg,#12C88B,#0E9E6E)' : `hsl(${h},70%,50%)`;
@@ -112,7 +127,7 @@ function openIdentity() {
   sw.querySelectorAll('.id-sw').forEach(el => el.onclick = () => {
     pendingHue = el.dataset.h === 'null' ? null : +el.dataset.h;
     sw.querySelectorAll('.id-sw').forEach(x => x.classList.remove('on')); el.classList.add('on');
-    document.getElementById('id-av').innerHTML = avatarSvg(myKind, true, myId, pendingHue != null ? pendingHue : slotHue(mySlot));
+    document.getElementById('id-av').innerHTML = avatarSvg(myKind, true, myId, pendingHue != null ? pendingHue : slotHue(mySlot), mySlot);
   });
   document.getElementById('idmask').classList.add('show');
 }
@@ -127,7 +142,7 @@ document.getElementById('id-save').onclick = () => {
   ws && ws.readyState === 1 && ws.send(JSON.stringify({ type: 'rename', name: myName, hue: myHue != null ? myHue : undefined }));
   document.getElementById('idmask').classList.remove('show');
   renderPeers();
-  const sa = document.getElementById('side-avatar'); if (sa) { sa.innerHTML = avatarSvg(myKind, true, myId, myColor()); sa.title = myName; }
+  const sa = document.getElementById('side-avatar'); if (sa) { sa.innerHTML = avatarSvg(myKind, true, myId, myColor(), mySlot); sa.title = myName; }
 };
 
 /* ── 本地历史(IndexedDB:文字+文件元数据;文件内容不持久化) ── */
@@ -208,10 +223,8 @@ const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','
 
 /* 头像:自己=品牌绿渐变;他人=其 id 派生的独特色相(每台一色,人人算出同一个,无需存储) */
 let _gid = 0;
-function avatarSvg(kind, me, id, hue) {
-  const glyph = kind === 'mobile'
-    ? '<rect x="14" y="9" width="12" height="21" rx="2.5" fill="none" stroke="#fff" stroke-width="2"/><circle cx="20" cy="26" r="1.4" fill="#fff"/>'
-    : '<rect x="8" y="10" width="24" height="15" rx="2" fill="none" stroke="#fff" stroke-width="2"/><path d="M16 30h8M20 25v5" stroke="#fff" stroke-width="2" stroke-linecap="round"/>';
+function avatarSvg(kind, me, id, hue, slot) {
+  const glyph = glyphFor(slot, id);       // 形状按槽位(房内不撞);未知设备回落 id 哈希
   const g = 'g' + (++_gid);
   // BRAND 哨兵或(自己且无色)=品牌绿;数字=该色相;undefined 的他人=id 哈希兜底(仅未知设备才会走到)
   const isBrand = hue === BRAND || (hue == null && me);
@@ -262,7 +275,7 @@ function addText(m, mine) {
   timeDivider(m.ts);
   const row = document.createElement('div');
   row.className = 'row' + (mine ? ' me' : '');
-  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (m.kind || 'mobile'), mine, m.fromId, mine ? myColor() : peerHue(m.fromId))}</div><div class="wrap">
+  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (m.kind || 'mobile'), mine, m.fromId, mine ? myColor() : peerHue(m.fromId), mine ? mySlot : peerSlot(m.fromId))}</div><div class="wrap">
     <div class="dev">${mine ? '' : esc(m.from)}</div><div class="bubble text"></div></div>`;
   row.querySelector('.bubble').textContent = m.text;
   list.appendChild(row); scrollBottom();
@@ -277,7 +290,7 @@ function fileCard(meta, role) {
   const head = mine ? `<span class="fc-share">↑ ${t('you_shared')}</span>`
                     : `<span class="fc-share">${esc(meta.from || '')} ${t('shared')}</span>`;
   const thumbHtml = meta.thumb ? `<div class="fc-thumb"><img src="${meta.thumb}"></div>` : '';
-  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (meta.kind || 'mobile'), mine, meta.fromId, mine ? myColor() : peerHue(meta.fromId))}</div>
+  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (meta.kind || 'mobile'), mine, meta.fromId, mine ? myColor() : peerHue(meta.fromId), mine ? mySlot : peerSlot(meta.fromId))}</div>
     <div class="wrap"><div class="dev">${mine ? '' : esc(meta.from || '')}</div>
     <div class="bubble file">
       <div class="fc-head">${head}</div>
@@ -358,7 +371,7 @@ function fileCard(meta, role) {
       const box = act.querySelector('.fc-recv'); if (!box) return;
       const n = api._dl ? api._dl.size : 0;
       const avs = [...(api._dl || new Map()).entries()].slice(0, 5)
-        .map(([id]) => `<span class="fc-av">${avatarSvg('mobile', false, id, peerHue(id))}</span>`).join('');
+        .map(([id]) => `<span class="fc-av">${avatarSvg('mobile', false, id, peerHue(id), peerSlot(id))}</span>`).join('');
       box.innerHTML = n ? `${avs}<span class="fc-dln">${t('downloaded_by', { n })}</span>`
                         : `<span class="fc-hint">${t('no_downloads_yet')}</span>`;
     },
@@ -647,7 +660,7 @@ function renderPeers() {
   peersBar.innerHTML = '';
   const selfEl = document.createElement('div');
   selfEl.className = 'peer self' + (currentConv === 'all' ? ' cur' : '');
-  selfEl.innerHTML = `<div class="pa">${avatarSvg(myKind, true, myId, myColor())}<div class="dot on"></div>${badgeHtml('all')}</div>
+  selfEl.innerHTML = `<div class="pa">${avatarSvg(myKind, true, myId, myColor(), mySlot)}<div class="dot on"></div>${badgeHtml('all')}</div>
     <div class="pn">${esc(myName)}</div>`;
   selfEl.onclick = () => switchConv('all');
   peersBar.appendChild(selfEl);
@@ -656,7 +669,7 @@ function renderPeers() {
     const el = document.createElement('div');
     el.className = 'peer' + (currentConv === id ? ' cur' : '');
     const dotCls = p.dc && p.dc.readyState === 'open' ? ' on' : '';   // 连上=绿,连接中=无色
-    el.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false, id, peerHue(id))}
+    el.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false, id, peerHue(id), p.slot)}
       <div class="dot${dotCls}"></div>${badgeHtml(id)}</div>
       <div class="pn">${esc(p.name)}</div>`;
     el.onclick = () => switchConv(id);
@@ -685,7 +698,7 @@ function renderPeers() {
     dl.appendChild(allRow);
     const selfRow = document.createElement('div');
     selfRow.className = 'dl-row selfrow';
-    selfRow.innerHTML = `<div class="pa">${avatarSvg(myKind, true, myId, myColor())}<div class="dot on"></div></div>
+    selfRow.innerHTML = `<div class="pa">${avatarSvg(myKind, true, myId, myColor(), mySlot)}<div class="dot on"></div></div>
       <div class="di"><div class="dn">${esc(myName)}</div><div class="ds">${t('self_tag')}</div></div>`;
     dl.appendChild(selfRow);
     for (const [id, p] of peers) {
@@ -693,7 +706,7 @@ function renderPeers() {
       const on = p.dc && p.dc.readyState === 'open';
       const row = document.createElement('div');
       row.className = 'dl-row' + (currentConv === id ? ' cur' : '');
-      row.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false, id, peerHue(id))}
+      row.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false, id, peerHue(id), p.slot)}
         <div class="dot${on ? ' on' : ''}"></div>${badgeHtml(id)}</div>
         <div class="di"><div class="dn">${esc(p.name)}</div>
         <div class="ds${on ? ' on' : ''}">${t(on ? 'st_on' : 'st_mid')}</div></div>`;
@@ -1006,7 +1019,7 @@ function renderOffer(meta) {
 /* ── 桌面边栏 ── */
 const sideAvatar = document.getElementById('side-avatar');
 if (sideAvatar) {
-  sideAvatar.innerHTML = avatarSvg(myKind, true, myId, myColor());
+  sideAvatar.innerHTML = avatarSvg(myKind, true, myId, myColor(), mySlot);
   sideAvatar.title = myName;
   sideAvatar.onclick = $('rename').onclick;
   document.getElementById('nav-invite').onclick = () => showInvite();
