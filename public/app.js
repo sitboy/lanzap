@@ -236,42 +236,71 @@ function addFileBubble(meta, mine) {
   };
 }
 
-/* ── 组队:三通道(扫码/输码/链接)。URL hash 带 #r=房码 时覆盖自动分房 ── */
-const urlRoom = (location.hash.match(/r=([A-Za-z0-9]{4,8})/) || [])[1];
+/* ── 组队:三通道(扫码/输码/链接)+ 配一次永久记住 ──
+ * urlRoom 优先级:URL #r= (别人分享的) > localStorage 记住的 (上次配的对) > 空(自动发现) */
+let urlRoom = (location.hash.match(/r=([A-Za-z0-9]{4,8})/) || [])[1]
+            || localStorage.pairedRoom || '';
+if (urlRoom && !location.hash) history.replaceState(null, '', '#r=' + urlRoom);
 const card = document.getElementById('invite-card');
 
 function inviteUrl() { return location.origin + '/#r=' + urlRoom; }
+
+// 进房=无刷新切换:记住房码→更新地址栏→重连信令(不整页 reload,秒切不闪)
 function enterRoom(code) {
-  sessionStorage.showInvite = '1';
-  location.hash = 'r=' + code.toUpperCase(); location.reload();
+  const c = code.toUpperCase();
+  if (c === urlRoom) { document.getElementById('mask').classList.remove('show'); return; }
+  urlRoom = c;
+  localStorage.pairedRoom = c;               // ← 永久记住这次配对
+  history.replaceState(null, '', '#r=' + c);
+  document.getElementById('mask').classList.remove('show');
+  reconnectRoom();
+}
+function leaveRoom() {
+  urlRoom = '';
+  delete localStorage.pairedRoom;            // ← 忘记配对,回到自动发现
+  history.replaceState(null, '', location.pathname);
+  document.getElementById('mask').classList.remove('show');
+  reconnectRoom();
+}
+// 切房:清掉旧房所有 P2P 连接与消息,用新房重连 ws(无刷新)
+function reconnectRoom() {
+  for (const [, p] of peers) { try { p.pc && p.pc.close(); } catch {} }
+  peers.clear();
+  if (ws) { ws.onclose = null; try { ws.close(); } catch {} }
+  currentConv = 'all';
+  renderConv(); renderPeers(); updateTitle();
+  connect();
 }
 function setPane(join) {
   card.classList.toggle('join', join);
   document.getElementById('to-join').classList.toggle('on', join);
   document.getElementById('to-invite').classList.toggle('on', !join);
 }
+function ensureRoom() {
+  // 出码需要有房码;没有就地生成一个并记住(无刷新),弹层随即显示二维码
+  if (!urlRoom) enterRoomQuiet(Math.random().toString(36).slice(2, 7).replace(/[01oil]/g, 'x'));
+}
+function enterRoomQuiet(code) {   // 同 enterRoom 但不关弹层(用于"邀请面"就地出码)
+  urlRoom = code.toUpperCase();
+  localStorage.pairedRoom = urlRoom;
+  history.replaceState(null, '', '#r=' + urlRoom);
+  reconnectRoom();
+}
+function renderInvitePane() {
+  const qr = document.getElementById('qr'); qr.innerHTML = '';
+  new QRCode(qr, { text: inviteUrl(), width: 168, height: 168, correctLevel: QRCode.CorrectLevel.M });
+  document.getElementById('room-label').innerHTML =
+    `<small>${t('room')}</small><b>${urlRoom}</b>`;
+}
 function showInvite(pane) {
   // 默认面按角色习惯:手机多为加入方(扫码),桌面多为邀请方(出码)
   const join = pane ? pane === 'join' : (myKind === 'mobile' && !urlRoom);
-  if (!join && !urlRoom) {
-    // 出码需要先有组队房:生成码进房,刷新后自动弹回本层
-    enterRoom(Math.random().toString(36).slice(2, 7).replace(/[01oil]/g, 'x'));
-    return;
-  }
   setPane(join);
-  if (urlRoom) {
-    const qr = document.getElementById('qr'); qr.innerHTML = '';
-    new QRCode(qr, { text: inviteUrl(), width: 168, height: 168, correctLevel: QRCode.CorrectLevel.M });
-    document.getElementById('room-label').innerHTML =
-      `<small>${t('room')}</small><b>${urlRoom}</b>`;
-  }
+  if (!join) { ensureRoom(); renderInvitePane(); }
   document.getElementById('mask').classList.add('show');
 }
 document.getElementById('to-join').onclick = () => setPane(true);
-document.getElementById('to-invite').onclick = () => {
-  if (!urlRoom) { enterRoom(Math.random().toString(36).slice(2, 7).replace(/[01oil]/g, 'x')); return; }
-  setPane(false);
-};
+document.getElementById('to-invite').onclick = () => { setPane(false); ensureRoom(); renderInvitePane(); };
 document.getElementById('close-btn').onclick = () => document.getElementById('mask').classList.remove('show');
 document.getElementById('mask').onclick = e => { if (e.target.id === 'mask') e.target.classList.remove('show'); };
 document.getElementById('copy-btn').onclick = async e => {
@@ -281,7 +310,7 @@ document.getElementById('copy-btn').onclick = async e => {
   e.target.textContent = t('copied');
   setTimeout(() => { e.target.textContent = t('copy_link'); }, 1500);
 };
-document.getElementById('leave-btn').onclick = () => { location.hash = ''; location.reload(); };
+document.getElementById('leave-btn').onclick = leaveRoom;
 
 /* 输码加入 */
 const codeInput = document.getElementById('code-input'), codeGo = document.getElementById('code-go');
@@ -655,8 +684,6 @@ if (sideAvatar) {
 
 /* ── 启动:渲染历史 → 连接 ── */
 applyI18n();
-if (urlRoom && sessionStorage.showInvite) { sessionStorage.removeItem('showInvite');
-  setTimeout(showInvite, 400); }
 dbReady.then(() => {
   if (!db) { renderConv(); return connect(); }
   const rq = db.transaction('msgs').objectStore('msgs').getAll();
