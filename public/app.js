@@ -30,7 +30,7 @@ function updateRoomState() {
 // 清空本机聊天记录(阅后即焚/退出销毁)
 function clearHistory() {
   if (!confirm(t('clear_confirm'))) return;
-  msgs = []; myFiles.clear(); offerCards.clear();
+  msgs = []; myFiles.clear(); offerCards.clear(); recvBlobs.clear();
   if (db) try { db.transaction('msgs', 'readwrite').objectStore('msgs').clear(); } catch {}
   renderConv();
   document.getElementById('mask').classList.remove('show');
@@ -158,10 +158,13 @@ function renderConv() {
   lastTs = 0;
   msgs.filter(m => (m.conv || 'all') === currentConv).slice(-200).forEach(m => {
     if (m.type === 'text') addText(m, !!m.me);
-    else if (m.me) {                          // 我分享过的文件:回执卡(仍可被拉,若文件还在本会话)
-      const c = fileCard(m, 'self'); c.selfReceipt();
-      if (myFiles && myFiles.has(m.fileId)) myFiles.get(m.fileId).card = c;
-    } else renderOffer(m);                     // 别人分享的:待下载卡(点了才拉,发送方在线才成)
+    else if (m.me) {                          // 我发过的文件:群=回执(可被拉);私聊=已发送
+      const c = fileCard(m, 'self');
+      if ((m.conv || 'all') === 'all') c.selfReceipt(); else c.sent();
+      const info = myFiles.get(m.fileId); if (info) info.card = c;
+    } else if (recvBlobs.has(m.fileId)) {      // 已收下的文件:直接显"已保存"(切走再切回不丢)
+      fileCard(m, 'offer').saved(recvBlobs.get(m.fileId));
+    } else renderOffer(m);                     // 还没收的:待下载卡(群通告点了才拉;私聊直推会自动收)
   });
   scrollBottom();
 }
@@ -178,6 +181,18 @@ const fmtTime = ts => { const d = new Date(ts), now = new Date();
   const hm = ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
   return d.toDateString() === now.toDateString() ? hm : (d.getMonth()+1)+'/'+d.getDate()+' '+hm; };
 const isImg = n => /\.(png|jpe?g|gif|webp)$/i.test(n);
+// 保存文件而不把 App 顶掉:能用系统分享面板(iOS/安卓原生,不导航)就用,否则触发下载(桌面)。
+// 绝不用 target=_blank 打开 blob——iOS Safari 会在当前视图打开、盖掉页面。
+async function saveBlob(blob, name) {
+  try {
+    const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return; }
+  } catch (e) { if (e && e.name === 'AbortError') return; /* 用户取消分享:不回落下载 */ }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = name || 'file';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
 const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 /* 头像:自己=品牌绿渐变;他人=其 id 派生的独特色相(每台一色,人人算出同一个,无需存储) */
@@ -283,19 +298,37 @@ function fileCard(meta, role) {
       if (pct) pct.textContent = `${t('downloading')} ${Math.round(got/total*100)}%`;
       sizeEl.textContent = `${fmtSize(got)} / ${fmtSize(total)}${speed ? ' · ' + fmtSize(speed) + '/s' : ''}`;
     },
-    // 已保存:打开/另存
+    // 已收到:图片内联预览(不导航),文件给"保存"按钮(走 saveBlob,不顶掉页面)
     saved(blob) {
-      const url = URL.createObjectURL(blob);
-      sizeEl.innerHTML = `<span class="ok">${t('saved_to')} · ${fmtSize(meta.size)}</span>`;
       if (isImg(meta.name)) {
+        const url = URL.createObjectURL(blob);
         const wrap = row.querySelector('.wrap');
         wrap.innerHTML = `<div class="dev">${esc(meta.from || '')}</div>
-          <a class="bubble img" href="${url}" target="_blank"><img src="${url}"></a>`;
+          <div class="bubble img"><img src="${url}"></div>
+          <div class="fc-imgact"><a class="fc-save">${t('save')}</a></div>`;
+        wrap.querySelector('.fc-save').onclick = () => saveBlob(blob, meta.name);
       } else {
-        act.innerHTML = `<a class="fc-btn ghost" href="${url}" target="_blank">${t('open')}</a>
-          <a class="fc-btn ghost" href="${url}" download="${esc(meta.name)}">${t('save_as')}</a>`;
+        sizeEl.innerHTML = `<span class="ok">${t('received')} · ${fmtSize(meta.size)}</span>`;
+        act.innerHTML = `<button class="fc-btn go">${t('save')}</button>`;
+        act.querySelector('.fc-btn').onclick = () => saveBlob(blob, meta.name);
       }
       if (nearBottom()) scrollBottom();
+    },
+    // 私聊直推(发送方视角):发送中 → 进度 → 已发送
+    sending() {
+      act.innerHTML = `<div class="prog"><div></div></div>
+        <div class="fc-row"><span class="fc-pct">${t('sending')}</span></div>`;
+    },
+    sendProgress(got, total, speed) {
+      const bar = act.querySelector('.prog>div'); if (bar) bar.style.width = (got/total*100).toFixed(1)+'%';
+      const pct = act.querySelector('.fc-pct');
+      if (pct) pct.textContent = `${t('sending')} ${Math.round(got/total*100)}%`;
+      sizeEl.textContent = `${fmtSize(got)} / ${fmtSize(total)}${speed ? ' · ' + fmtSize(speed) + '/s' : ''}`;
+    },
+    sent() {
+      const bar = act.querySelector('.prog>div'); if (bar) bar.style.width = '100%';
+      sizeEl.innerHTML = `<span class="ok">✓ ${t('sent_ok')} · ${fmtSize(meta.size)}</span>`;
+      act.innerHTML = '';
     },
     // 发送方离线:置灰+不可获取
     unavailable() {
@@ -681,7 +714,8 @@ function setupDC(p, dc, id) {
   p.dc = dc;
   dc.binaryType = 'arraybuffer';
   dc.bufferedAmountLowThreshold = 1024 * 1024;
-  dc.onopen = () => { p.stuck = false; clearTimeout(p.stuckTimer); renderPeers(); pump(p); };
+  dc.onopen = () => { p.stuck = false; clearTimeout(p.stuckTimer); renderPeers(); pump(p);
+    advertiseCatalogTo(p); };   // 这台刚可达:把本机还在提供的群通告补发给它(晚到/刷新都能补收)
   dc.onclose = () => { p.dc = null; renderPeers(); };
   dc.onmessage = ev => {
     if (typeof ev.data === 'string') {
@@ -696,33 +730,41 @@ function setupDC(p, dc, id) {
         const rec = { conv: id, type: 'text', from: m.from, fromId: m.fromId, kind: m.fromKind, text: m.text, ts: m.ts };
         pushMsg(rec);
         if (currentConv === id) addText(rec, false); else bumpUnread(id);
-      } else if (m.t === 'offer') {         // 文件通告:群=gossip洪泛,私聊(dm)=只进发送方私聊窗、不转发
+      } else if (m.t === 'offer') {         // 群文件通告:mid 控转发、fileId 控渲染(两级幂等)
+        if (markSeen(m.mid)) broadcastFrame(m, id);   // 本 session 首见此 mid → 继续洪泛;否则不再转发
+        if (m.fromId === myId) return;      // 自己发的通告不重复渲染
+        // 按 fileId 去重:历史重画/实时到达/发送方补发都可能带来同一文件,只保留一张卡
+        // (未在看群聊时只 pushMsg 不渲染,故必须查 msgs,不能只查 offerCards)
+        if (knownFile(m.fileId)) return;
         const meta = { fileId: m.fileId, name: m.name, size: m.size, mime: m.mime, ts: m.ts,
                        fromId: m.fromId, from: m.from, kind: m.fromKind, thumb: m.thumb };
-        if (m.dm) {                         // 私聊通告:直达,归到发送方(id)会话
-          pushMsg({ conv: id, type: 'file', ...meta });
-          if (currentConv === id) renderOffer(meta); else bumpUnread(id);
-        } else {                            // 群通告:去重+转发扩散
-          if (!markSeen(m.mid)) return;
-          broadcastFrame(m, id);
-          if (m.fromId === myId) return;    // 自己发的通告不重复渲染
-          pushMsg({ conv: 'all', type: 'file', ...meta });
-          if (currentConv === 'all') renderOffer(meta); else bumpUnread('all');
-        }
+        pushMsg({ conv: 'all', type: 'file', ...meta });
+        if (currentConv === 'all') renderOffer(meta); else bumpUnread('all');
       } else if (m.t === 'pull') {          // 有人要拉我的文件 → 直传给他(不经中继)
         if (m.mid && !markSeen(m.mid)) return;
         if (m.toId !== myId) { if (m.mid) broadcastFrame(m, id); return; }
         const f = myFiles.get(m.fileId); if (!f) return;
         f.card.addDownloader(m.fromId);
         streamFileTo({ id: m.fromId, name: m.from, ua: m.fromKind }, f.file, m.fileId);
-      } else if (m.t === 'fmeta') {         // 发送方开始给我发文件了
+      } else if (m.t === 'fmeta') {         // 开始收文件:群=先前点了下载(有 offer 卡);私聊=直推(自动建卡)
         const rec = offerCards.get(m.fileId);
         if (rec && rec.timer) { clearTimeout(rec.timer); rec.timer = null; }
-        p.incoming = { fileId: m.fileId, meta: m, chunks: [], got: 0, card: rec ? rec.card : null, t0: Date.now() };
+        let card = rec ? rec.card : null;
+        const conv = rec ? 'all' : id;      // 有通告卡=群会话;否则=私聊直推,归到发送方(id)
+        if (rec) card.downloading(() => {});
+        else {                              // 私聊直推:没有通告卡→自动建"接收中"卡
+          const meta = { fileId: m.fileId, name: m.name, size: m.size, mime: m.mime,
+                         ts: Date.now(), fromId: id, from: p.name, kind: p.ua };
+          pushMsg({ conv, type: 'file', ...meta });
+          if (currentConv === conv) { card = fileCard(meta, 'offer'); card.downloading(() => {}); }
+          else bumpUnread(conv);
+        }
+        p.incoming = { fileId: m.fileId, meta: m, chunks: [], got: 0, card, conv, t0: Date.now() };
       } else if (m.t === 'fend' && p.incoming && p.incoming.fileId === m.fileId) {
         const inc = p.incoming; p.incoming = null;
         const blob = new Blob(inc.chunks, { type: inc.meta.mime || 'application/octet-stream' });
-        if (inc.card) inc.card.saved(blob);
+        recvBlobs.set(inc.fileId, blob);    // 暂存内存:切走再切回/未在看时都能看到"已保存"
+        if (inc.card) inc.card.saved(blob); else bumpUnread(inc.conv);
       }
     } else if (p.incoming) {               // 文件二进制块
       p.incoming.chunks.push(ev.data);
@@ -739,16 +781,19 @@ async function pump(p) {
   const job = p.queue.shift();
   if (!job) return;
   p.sending = true;
+  const t0 = Date.now(), size = job.file.size;
   try {
     p.dc.send(JSON.stringify({ t: 'fmeta', fileId: job.fileId, name: job.file.name,
-                               size: job.file.size, mime: job.file.type }));
+                               size, mime: job.file.type }));
     let off = 0;
-    while (off < job.file.size) {
+    while (off < size) {
       if (p.dc.bufferedAmount > HIGH_WATER) { await new Promise(ok => { p.dc.onbufferedamountlow = ok; }); continue; }
       const buf = await job.file.slice(off, off + CHUNK).arrayBuffer();
       p.dc.send(buf); off += buf.byteLength;
+      if (job.card && job.card.sendProgress) job.card.sendProgress(off, size, off / ((Date.now() - t0) / 1000 || 1));
     }
     p.dc.send(JSON.stringify({ t: 'fend', fileId: job.fileId }));
+    if (job.card && job.card.sent) job.card.sent();     // 私聊直推:发完显"已发送"
   } catch (e) { /* 传输失败:接收方会超时,发送方静默 */ }
   p.sending = false;
   pump(p);
@@ -765,11 +810,11 @@ function waitDcOpen(id, ms) {
     }, 150);
   });
 }
-async function streamFileTo(info, file, fileId) {
+async function streamFileTo(info, file, fileId, selfCard) {
   let p = peers.get(info.id);
   if (!p || !p.dc || p.dc.readyState !== 'open') { ensurePeer(info); p = await waitDcOpen(info.id, 12000); }
-  if (!p) return;                    // 建不起来:拉取方会超时显"无法获取"
-  p.queue.push({ file, fileId }); pump(p);
+  if (!p) { if (selfCard) selfCard.unavailable(); return; }   // 建不起来:私聊卡显不可达
+  p.queue.push({ file, fileId, card: selfCard }); pump(p);
 }
 
 /* ── 发送入口:群聊=全员,私聊=目标设备 ── */
@@ -821,11 +866,17 @@ const attach = document.getElementById('attach');
 if (attach) attach.onclick = () => fileInput.click();
 fileInput.onchange = () => { [...fileInput.files].forEach(sendFile); fileInput.value = ''; };
 
-/* ── 文件:通告-拉取 ── */
-const myFiles = new Map();     // fileId -> {file, card}  我持有、待人来拉的文件
+/* ── 文件 ── */
+// myFiles 是"在线目录"(catalog):我这台还在提供的文件。群聊文件带 group+mid,供新设备可达时补发
+const myFiles = new Map();     // fileId -> {file, card, meta, group, mid}
 const offerCards = new Map();  // fileId -> {card, meta, timer}  我收到的可拉取通告
+const recvBlobs = new Map();   // fileId -> Blob  已收下的文件(仅内存,不入库,关页即丢)
+// 这个文件我是否已知(历史/已渲染通告/已收下)——跨 reload、跨到达路径的按-fileId 幂等
+function knownFile(fileId) {
+  return offerCards.has(fileId) || recvBlobs.has(fileId) || msgs.some(x => x.type === 'file' && x.fileId === fileId);
+}
 
-// 发文件=贴通告,文件留本机等人来拉。群聊=gossip 洪泛;私聊=只发给对方那台(不进群)
+// 群聊=贴通告(状态化,谁可达谁补收),文件留本机等人来拉;私聊=直推给对方那台(发了就到,不用点下载)
 async function sendFile(file) {
   const conv = currentConv;                 // 捕获当前会话:'all'=群 / peerId=私聊
   const ts = Date.now();
@@ -833,17 +884,27 @@ async function sendFile(file) {
   const thumb = isImg(file.name) ? await makeThumb(file).catch(() => null) : null;
   const meta = { fileId, name: file.name, size: file.size, mime: file.type, ts,
                  fromId: myId, from: myName, kind: myKind, thumb };
-  const card = fileCard(meta, 'self'); card.selfReceipt();
-  myFiles.set(fileId, { file, card });
+  const card = fileCard(meta, 'self');
   pushMsg({ conv, type: 'file', me: 1, ...meta });   // 历史归到当前会话
-  if (conv === 'all') {                     // 群:洪泛通告
+  if (conv === 'all') {                     // 群:发通告(=向所有可达设备同步我的目录)
+    card.selfReceipt();
     const mid = newMid(); markSeen(mid);
+    myFiles.set(fileId, { file, card, meta, group: true, mid });
     broadcastFrame({ t: 'offer', mid, ...meta }, null);
-  } else {                                  // 私聊:只把通告直发给对方那台
+  } else {                                  // 私聊:直推,不等对方点下载
     const p = peers.get(conv);
-    if (p && p.dc && p.dc.readyState === 'open') p.dc.send(JSON.stringify({ t: 'offer', dm: true, ...meta }));
-    else sysLine(t('no_direct', { name: p ? p.name : '' }));
+    myFiles.set(fileId, { file, card, meta, group: false });
+    if (p && p.dc && p.dc.readyState === 'open') {
+      card.sending();
+      streamFileTo({ id: conv, name: p.name, ua: p.ua }, file, fileId, card);
+    } else { card.unavailable(); sysLine(t('no_direct', { name: p ? p.name : '' })); }
   }
+}
+// 目录同步:把本机还在提供的群聊通告定向补发给刚可达的一台设备(复用原 mid,老设备自动去重)
+function advertiseCatalogTo(p) {
+  if (!p || !p.dc || p.dc.readyState !== 'open') return;
+  for (const info of myFiles.values())
+    if (info.group) p.dc.send(JSON.stringify({ t: 'offer', mid: info.mid, ...info.meta }));
 }
 // 生成 ~360px JPEG 缩略图(几十 KB,可随通告 gossip);原图不动、仍按需拉
 function makeThumb(file) {
