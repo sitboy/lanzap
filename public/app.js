@@ -243,29 +243,26 @@ function addFileBubble(meta, mine) {
   };
 }
 
-/* ── 组队:三通道(扫码/输码/链接)+ 配一次永久记住 ──
- * urlRoom 优先级:URL #r= (别人分享的) > localStorage 记住的 (上次配的对) > 空(自动发现) */
-let urlRoom = (location.hash.match(/r=([A-Za-z0-9]{4,8})/) || [])[1]
-            || localStorage.pairedRoom || '';
-if (urlRoom && !location.hash) history.replaceState(null, '', '#r=' + urlRoom);
+/* ── 组队:状态无状态化——房码只活在地址栏(#r=),不存 localStorage ──
+ * 裸链接/新标签/隐私模式 一律回"本网络大房间";带 #r= 的链接才进对应共享房。
+ * 好处:同一网络任何打开方式都进同一大房间,不会因存储隔离(隐私模式)莫名分家 */
+let urlRoom = (location.hash.match(/r=([A-Za-z0-9]{4,8})/) || [])[1] || '';
 const card = document.getElementById('invite-card');
 
 function inviteUrl() { return location.origin + '/#r=' + urlRoom; }
 
-// 进房=无刷新切换:记住房码→更新地址栏→重连信令(不整页 reload,秒切不闪)
+// 进房=无刷新切换:更新地址栏(hash 即状态)→重连信令。不整页 reload,不写 localStorage
 function enterRoom(code) {
   const c = code.toUpperCase();
   if (c === urlRoom) { document.getElementById('mask').classList.remove('show'); return; }
   urlRoom = c;
-  localStorage.pairedRoom = c;               // ← 永久记住这次配对
   history.replaceState(null, '', '#r=' + c);
   document.getElementById('mask').classList.remove('show');
   reconnectRoom();
 }
 function leaveRoom() {
   urlRoom = '';
-  delete localStorage.pairedRoom;            // ← 忘记配对,回到自动发现
-  history.replaceState(null, '', location.pathname);
+  history.replaceState(null, '', location.pathname);   // 清掉 hash=回本网络大房间
   document.getElementById('mask').classList.remove('show');
   reconnectRoom();
 }
@@ -289,7 +286,6 @@ function ensureRoom() {
 }
 function enterRoomQuiet(code) {   // 同 enterRoom 但不关弹层(用于"邀请面"就地出码)
   urlRoom = code.toUpperCase();
-  localStorage.pairedRoom = urlRoom;
   history.replaceState(null, '', '#r=' + urlRoom);
   reconnectRoom();
 }
