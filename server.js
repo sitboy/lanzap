@@ -56,7 +56,10 @@ wss.on('connection', (ws, req) => {
   const autoKey = roomKey(req);
   let room = null, key = null, peerId = null;
 
-  const peersInfo = () => [...room.entries()].map(([id, s]) => ({ id, name: s._name, ua: s._ua, hue: s._hue }));
+  const peersInfo = () => [...room.entries()].map(([id, s]) => ({ id, name: s._name, ua: s._ua, hue: s._hue, slot: s._slot }));
+  // 头像调色板槽位:给每台设备分房内最小空闲槽(离开即腾出、复用),客户端据此取精选色,不撞色也不乱
+  const pickSlot = () => { const used = new Set(); for (const s of room.values()) if (s._slot != null) used.add(s._slot);
+                           let i = 0; while (used.has(i)) i++; return i; };
   const sendTo = (id, obj) => { const s = room.get(id); if (s && s.readyState === 1) s.send(JSON.stringify(obj)); };
   const broadcast = (obj, exceptId) => {
     if (!room) return;
@@ -84,13 +87,15 @@ wss.on('connection', (ws, req) => {
       ws._name = String(m.name || '设备').slice(0, 40);
       ws._ua = String(m.ua || '').slice(0, 20);
       ws._hue = (typeof m.hue === 'number' && m.hue >= 0 && m.hue < 360) ? m.hue : undefined;
-      // 同 id 重连:顶掉旧连接
-      const old = room.get(peerId); if (old && old !== ws) try { old.close(); } catch {}
+      // 同 id 重连:顶掉旧连接,并沿用它原来的槽位(颜色不变);新设备取最小空闲槽
+      const old = room.get(peerId);
+      ws._slot = (old && old._slot != null) ? old._slot : pickSlot();
+      if (old && old !== ws) try { old.close(); } catch {}
       room.set(peerId, ws);
-      ws.send(JSON.stringify({ type: 'peers', you: peerId,
+      ws.send(JSON.stringify({ type: 'peers', you: peerId, slot: ws._slot,
         room: manual ? m.room : roomCode(key), manual,
         peers: peersInfo().filter(p => p.id !== peerId) }));
-      broadcast({ type: 'peer-joined', peer: { id: peerId, name: ws._name, ua: ws._ua, hue: ws._hue } }, peerId);
+      broadcast({ type: 'peer-joined', peer: { id: peerId, name: ws._name, ua: ws._ua, hue: ws._hue, slot: ws._slot } }, peerId);
     } else if (m.type === 'rename' && peerId) {
       ws._name = String(m.name || '').slice(0, 40) || ws._name;
       if (typeof m.hue === 'number' && m.hue >= 0 && m.hue < 360) ws._hue = m.hue;

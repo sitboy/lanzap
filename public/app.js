@@ -70,9 +70,20 @@ let myId = sessionStorage.deviceId;
 if (!myId) { myId = 'd' + Math.random().toString(36).slice(2, 10); sessionStorage.deviceId = myId; }
 const myKind = /iPhone|iPad|Android/.test(navigator.userAgent) ? 'mobile' : 'desktop';
 
-// id → 稳定哈希(任何节点对同一 id 算出同一头像/颜色,无需服务器存储)
+// id → 稳定哈希(用于默认名后缀;颜色改由服务器分槽,见 PALETTE)
 function hashId(s) { let h = 2166136261; for (let i = 0; i < (s || '').length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
 function hueOf(id) { return hashId(id) % 360; }
+// 头像调色板:服务器给每台设备分配一个槽位(join 顺序、房内不撞色),客户端据此取色。
+// slot 0 = 品牌绿(哨兵 BRAND,自己/别人看都一致);其后为精选、区分度高的色相。超长回环(局域网罕见)。
+const BRAND = 'brand';   // 显式哨兵:区别于 undefined(未知→回落哈希),避免 null 一词多义
+const PALETTE = [BRAND, 210, 265, 28, 330, 188, 45, 300, 240, 355];
+let mySlot = null;
+function slotHue(slot) { return slot == null ? undefined : PALETTE[slot % PALETTE.length]; }
+function myColor() { return myHue != null ? myHue : slotHue(mySlot); }   // 自定义色优先,否则槽位色
+function refreshSelfAvatars() {                                          // 槽位到手后刷新自己的头像
+  const sa = document.getElementById('side-avatar'); if (sa) sa.innerHTML = avatarSvg(myKind, true, myId, myColor());
+  renderPeers(); renderConv();
+}
 // 默认名:设备类型 + id 派生两位后缀(iPhone·K2,天然区分,每标签不同)
 function defaultName(id) {
   const ua = navigator.userAgent;
@@ -84,7 +95,7 @@ function defaultName(id) {
 let myName = localStorage.deviceName || defaultName(myId);
 if (!localStorage.deviceName) localStorage.deviceName = myName;
 let myHue = localStorage.deviceHue != null ? +localStorage.deviceHue : null;   // 自定义色相(null=默认)
-function peerHue(id) { const p = peers.get(id); return p ? p.hue : undefined; }
+function peerHue(id) { const p = peers.get(id); return p ? (p.hue != null ? p.hue : slotHue(p.slot)) : undefined; }
 document.getElementById('back').onclick = () => switchConv('all');
 // 身份编辑面板:改名 + 换色 + 保存并广播(实时同步给房里其他设备,服务器只转发不存)
 const SWATCHES = [null, 210, 265, 28, 330];   // null=品牌绿;蓝/紫/橙/粉
@@ -92,7 +103,7 @@ let pendingHue = myHue;
 function openIdentity() {
   pendingHue = myHue;
   document.getElementById('id-name').value = myName;
-  document.getElementById('id-av').innerHTML = avatarSvg(myKind, true, myId, pendingHue);
+  document.getElementById('id-av').innerHTML = avatarSvg(myKind, true, myId, pendingHue != null ? pendingHue : slotHue(mySlot));
   const sw = document.getElementById('id-swatches');
   sw.innerHTML = SWATCHES.map(h => {
     const bg = h == null ? 'linear-gradient(150deg,#12C88B,#0E9E6E)' : `hsl(${h},70%,50%)`;
@@ -101,7 +112,7 @@ function openIdentity() {
   sw.querySelectorAll('.id-sw').forEach(el => el.onclick = () => {
     pendingHue = el.dataset.h === 'null' ? null : +el.dataset.h;
     sw.querySelectorAll('.id-sw').forEach(x => x.classList.remove('on')); el.classList.add('on');
-    document.getElementById('id-av').innerHTML = avatarSvg(myKind, true, myId, pendingHue);
+    document.getElementById('id-av').innerHTML = avatarSvg(myKind, true, myId, pendingHue != null ? pendingHue : slotHue(mySlot));
   });
   document.getElementById('idmask').classList.add('show');
 }
@@ -116,7 +127,7 @@ document.getElementById('id-save').onclick = () => {
   ws && ws.readyState === 1 && ws.send(JSON.stringify({ type: 'rename', name: myName, hue: myHue != null ? myHue : undefined }));
   document.getElementById('idmask').classList.remove('show');
   renderPeers();
-  const sa = document.getElementById('side-avatar'); if (sa) { sa.innerHTML = avatarSvg(myKind, true, myId, myHue); sa.title = myName; }
+  const sa = document.getElementById('side-avatar'); if (sa) { sa.innerHTML = avatarSvg(myKind, true, myId, myColor()); sa.title = myName; }
 };
 
 /* ── 本地历史(IndexedDB:文字+文件元数据;文件内容不持久化) ── */
@@ -202,9 +213,10 @@ function avatarSvg(kind, me, id, hue) {
     ? '<rect x="14" y="9" width="12" height="21" rx="2.5" fill="none" stroke="#fff" stroke-width="2"/><circle cx="20" cy="26" r="1.4" fill="#fff"/>'
     : '<rect x="8" y="10" width="24" height="15" rx="2" fill="none" stroke="#fff" stroke-width="2"/><path d="M16 30h8M20 25v5" stroke="#fff" stroke-width="2" stroke-linecap="round"/>';
   const g = 'g' + (++_gid);
-  const h = (hue != null) ? hue : (me ? null : hueOf(id));
-  const stops = h == null ? ['#12C88B', '#0E9E6E']    // 自己默认=品牌绿;自定义/他人=色相
-    : [`hsl(${h},70%,57%)`, `hsl(${h},72%,43%)`];
+  // BRAND 哨兵或(自己且无色)=品牌绿;数字=该色相;undefined 的他人=id 哈希兜底(仅未知设备才会走到)
+  const isBrand = hue === BRAND || (hue == null && me);
+  const stops = isBrand ? ['#12C88B', '#0E9E6E']
+    : (() => { const h = typeof hue === 'number' ? hue : hueOf(id); return [`hsl(${h},70%,57%)`, `hsl(${h},72%,43%)`]; })();
   return `<svg viewBox="0 0 40 40"><defs><linearGradient id="${g}" x1="0" y1="0" x2="1" y2="1">
     <stop offset="0" stop-color="${stops[0]}"/><stop offset="1" stop-color="${stops[1]}"/></linearGradient></defs>
     <rect width="40" height="40" rx="10" fill="url(#${g})"/>${glyph}</svg>`;
@@ -250,7 +262,7 @@ function addText(m, mine) {
   timeDivider(m.ts);
   const row = document.createElement('div');
   row.className = 'row' + (mine ? ' me' : '');
-  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (m.kind || 'mobile'), mine, m.fromId, mine ? myHue : peerHue(m.fromId))}</div><div class="wrap">
+  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (m.kind || 'mobile'), mine, m.fromId, mine ? myColor() : peerHue(m.fromId))}</div><div class="wrap">
     <div class="dev">${mine ? '' : esc(m.from)}</div><div class="bubble text"></div></div>`;
   row.querySelector('.bubble').textContent = m.text;
   list.appendChild(row); scrollBottom();
@@ -265,7 +277,7 @@ function fileCard(meta, role) {
   const head = mine ? `<span class="fc-share">↑ ${t('you_shared')}</span>`
                     : `<span class="fc-share">${esc(meta.from || '')} ${t('shared')}</span>`;
   const thumbHtml = meta.thumb ? `<div class="fc-thumb"><img src="${meta.thumb}"></div>` : '';
-  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (meta.kind || 'mobile'), mine, meta.fromId, mine ? myHue : peerHue(meta.fromId))}</div>
+  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (meta.kind || 'mobile'), mine, meta.fromId, mine ? myColor() : peerHue(meta.fromId))}</div>
     <div class="wrap"><div class="dev">${mine ? '' : esc(meta.from || '')}</div>
     <div class="bubble file">
       <div class="fc-head">${head}</div>
@@ -346,7 +358,7 @@ function fileCard(meta, role) {
       const box = act.querySelector('.fc-recv'); if (!box) return;
       const n = api._dl ? api._dl.size : 0;
       const avs = [...(api._dl || new Map()).entries()].slice(0, 5)
-        .map(([id]) => `<span class="fc-av">${avatarSvg('mobile', false, id)}</span>`).join('');
+        .map(([id]) => `<span class="fc-av">${avatarSvg('mobile', false, id, peerHue(id))}</span>`).join('');
       box.innerHTML = n ? `${avs}<span class="fc-dln">${t('downloaded_by', { n })}</span>`
                         : `<span class="fc-hint">${t('no_downloads_yet')}</span>`;
     },
@@ -394,16 +406,16 @@ function setPane(join) {
   document.getElementById('to-join').classList.toggle('on', join);
   document.getElementById('to-invite').classList.toggle('on', !join);
 }
-function ensureRoom() {
-  // 出码需要有房码;没有就地生成一个并记住(无刷新),弹层随即显示二维码
-  if (!urlRoom) enterRoomQuiet(Math.random().toString(36).slice(2, 7).replace(/[01oil]/g, 'x'));
-}
 function enterRoomQuiet(code) {   // 同 enterRoom 但不关弹层(用于"邀请面"就地出码)
   urlRoom = code.toUpperCase();
   history.replaceState(null, '', '#r=' + urlRoom);
   reconnectRoom();
 }
 function renderInvitePane() {
+  const inRoom = !!urlRoom;
+  document.getElementById('room-create').style.display = inRoom ? 'none' : '';
+  document.getElementById('room-active').style.display = inRoom ? '' : 'none';
+  if (!inRoom) return;                     // 本网:只展示"创建私密房"引导,不出码(=不建房、不离网)
   const qr = document.getElementById('qr'); qr.innerHTML = '';
   new QRCode(qr, { text: inviteUrl(), width: 168, height: 168, correctLevel: QRCode.CorrectLevel.M });
   const inp = document.getElementById('room-name-input');
@@ -422,14 +434,19 @@ function renderInvitePane() {
   inp.addEventListener('blur', commit);
 })();
 function showInvite(pane) {
-  // 默认面按角色习惯:手机多为加入方(扫码),桌面多为邀请方(出码)
-  const join = pane ? pane === 'join' : (myKind === 'mobile' && !urlRoom);
+  // 默认面:已在私密房→出码;否则手机默认扫码(加入方)、桌面默认出码引导
+  const join = pane ? pane === 'join' : (!urlRoom && myKind === 'mobile');
   setPane(join);
-  if (!join) { ensureRoom(); renderInvitePane(); }
+  if (!join) renderInvitePane();     // 不再 ensureRoom(打开组队零副作用,不建房不离网)
   document.getElementById('mask').classList.add('show');
 }
 document.getElementById('to-join').onclick = () => setPane(true);
-document.getElementById('to-invite').onclick = () => { setPane(false); ensureRoom(); renderInvitePane(); };
+document.getElementById('to-invite').onclick = () => { setPane(false); renderInvitePane(); };
+// 显式创建私密房(用户主动才离开本网):此刻才生成房码并重连
+document.getElementById('create-room-btn').onclick = () => {
+  enterRoomQuiet(Math.random().toString(36).slice(2, 7).replace(/[01oil]/g, 'x'));
+  renderInvitePane();
+};
 document.getElementById('close-btn').onclick = () => document.getElementById('mask').classList.remove('show');
 document.getElementById('mask').onclick = e => { if (e.target.id === 'mask') e.target.classList.remove('show'); };
 document.getElementById('copy-btn').onclick = async e => {
@@ -441,6 +458,8 @@ document.getElementById('copy-btn').onclick = async e => {
 };
 document.getElementById('leave-btn').onclick = leaveRoom;
 { const cb = document.getElementById('clear-btn'); if (cb) cb.onclick = clearHistory; }
+// 页脚房间状态=常驻逃生口:点一下开组队弹层(本网→建房引导;私密房→出码+返回本网),永不被困
+{ const fn = $('foot-note'); if (fn) { fn.style.cursor = 'pointer'; fn.onclick = () => showInvite('invite'); } }
 
 /* 输码加入 */
 const codeInput = document.getElementById('code-input'), codeGo = document.getElementById('code-go');
@@ -572,6 +591,7 @@ function connect() {
     lastServerMsg = Date.now();                     // 任一服务器消息都刷新活性时间戳(僵尸检测用)
     const m = JSON.parse(e.data);
     if (m.type === 'peers') {
+      if (m.slot != null && m.slot !== mySlot) { mySlot = m.slot; refreshSelfAvatars(); }   // 服务器分配的头像槽位
       if (m.room) { window.__room = m.room; window.__manual = !!m.manual; updateRoomState(); }
       // 按服务器权威名单对账:重连(息屏/切后台归来)后,残留的死连接要拆了重建,活的留着
       const ids = new Set(m.peers.map(x => x.id));
@@ -627,7 +647,7 @@ function renderPeers() {
   peersBar.innerHTML = '';
   const selfEl = document.createElement('div');
   selfEl.className = 'peer self' + (currentConv === 'all' ? ' cur' : '');
-  selfEl.innerHTML = `<div class="pa">${avatarSvg(myKind, true, myId, myHue)}<div class="dot on"></div>${badgeHtml('all')}</div>
+  selfEl.innerHTML = `<div class="pa">${avatarSvg(myKind, true, myId, myColor())}<div class="dot on"></div>${badgeHtml('all')}</div>
     <div class="pn">${esc(myName)}</div>`;
   selfEl.onclick = () => switchConv('all');
   peersBar.appendChild(selfEl);
@@ -636,7 +656,7 @@ function renderPeers() {
     const el = document.createElement('div');
     el.className = 'peer' + (currentConv === id ? ' cur' : '');
     const dotCls = p.dc && p.dc.readyState === 'open' ? ' on' : '';   // 连上=绿,连接中=无色
-    el.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false, id, p.hue)}
+    el.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false, id, peerHue(id))}
       <div class="dot${dotCls}"></div>${badgeHtml(id)}</div>
       <div class="pn">${esc(p.name)}</div>`;
     el.onclick = () => switchConv(id);
@@ -665,7 +685,7 @@ function renderPeers() {
     dl.appendChild(allRow);
     const selfRow = document.createElement('div');
     selfRow.className = 'dl-row selfrow';
-    selfRow.innerHTML = `<div class="pa">${avatarSvg(myKind, true, myId, myHue)}<div class="dot on"></div></div>
+    selfRow.innerHTML = `<div class="pa">${avatarSvg(myKind, true, myId, myColor())}<div class="dot on"></div></div>
       <div class="di"><div class="dn">${esc(myName)}</div><div class="ds">${t('self_tag')}</div></div>`;
     dl.appendChild(selfRow);
     for (const [id, p] of peers) {
@@ -673,7 +693,7 @@ function renderPeers() {
       const on = p.dc && p.dc.readyState === 'open';
       const row = document.createElement('div');
       row.className = 'dl-row' + (currentConv === id ? ' cur' : '');
-      row.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false, id, p.hue)}
+      row.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false, id, peerHue(id))}
         <div class="dot${on ? ' on' : ''}"></div>${badgeHtml(id)}</div>
         <div class="di"><div class="dn">${esc(p.name)}</div>
         <div class="ds${on ? ' on' : ''}">${t(on ? 'st_on' : 'st_mid')}</div></div>`;
@@ -691,7 +711,7 @@ function visiblePeerCount() { let n = 0; for (const [, p] of peers) if (!p.stuck
 /* ── WebRTC mesh ── */
 function addPeer(info, initiator) {
   if (peers.has(info.id)) return;
-  const p = { name: info.name, ua: info.ua, hue: info.hue, pc: null, dc: null, queue: [], sending: false, recv: null,
+  const p = { name: info.name, ua: info.ua, hue: info.hue, slot: info.slot, pc: null, dc: null, queue: [], sending: false, recv: null,
               stuck: false };
   peers.set(info.id, p);
   // 10 秒连不上:此设备是服务器牵的线(=同出口/同网络),却打洞失败→几乎必是二层被挡
@@ -893,6 +913,23 @@ const attach = document.getElementById('attach');
 if (attach) attach.onclick = () => fileInput.click();
 fileInput.onchange = () => { [...fileInput.files].forEach(sendFile); fileInput.value = ''; };
 
+// 粘贴截图/文件:直接发到当前会话(截图=clipboardData.files 里的 image/*)
+txt.addEventListener('paste', e => {
+  const fs = e.clipboardData && e.clipboardData.files;
+  if (fs && fs.length) { e.preventDefault(); [...fs].forEach(sendFile); }
+});
+// 拖文件到窗口任意处即发。浏览器默认会"打开文件=离开页面",必须全程 preventDefault 拦截
+const hasFiles = e => e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
+let dragDepth = 0;
+window.addEventListener('dragenter', e => { if (hasFiles(e)) { e.preventDefault(); if (dragDepth++ === 0) document.body.classList.add('dragging'); } });
+window.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
+window.addEventListener('dragleave', e => { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dragging'); } });
+window.addEventListener('drop', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging');
+  [...e.dataTransfer.files].forEach(sendFile);
+});
+
 /* ── 文件 ── */
 // myFiles 是"在线目录"(catalog):我这台还在提供的文件。群聊文件带 group+mid,供新设备可达时补发
 const myFiles = new Map();     // fileId -> {file, card, meta, group, mid}
@@ -969,7 +1006,7 @@ function renderOffer(meta) {
 /* ── 桌面边栏 ── */
 const sideAvatar = document.getElementById('side-avatar');
 if (sideAvatar) {
-  sideAvatar.innerHTML = avatarSvg(myKind, true, myId, myHue);
+  sideAvatar.innerHTML = avatarSvg(myKind, true, myId, myColor());
   sideAvatar.title = myName;
   sideAvatar.onclick = $('rename').onclick;
   document.getElementById('nav-invite').onclick = () => showInvite();

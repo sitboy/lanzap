@@ -171,6 +171,11 @@
   .fc-imgact { margin-top:4px; }
   .fc-save { font-size:12.5px; color:var(--brand); cursor:pointer; }
   .fc-save:active { opacity:.6; }
+  #drophint { position:fixed; inset:0; z-index:60; display:none; align-items:center; justify-content:center;
+    background:rgba(18,200,139,.10); pointer-events:none; }
+  body.dragging #drophint { display:flex; }
+  #drophint-box { padding:22px 34px; border:2.5px dashed var(--brand); border-radius:16px;
+    background:var(--panel); color:var(--brand); font-size:16px; font-weight:600; }
 
   footer { background:var(--panel); border-top:.5px solid var(--line); padding:8px 10px;
            padding-bottom:calc(8px + env(safe-area-inset-bottom)); flex:none; }
@@ -445,13 +450,19 @@
     <button id="to-join" data-i18n="tab_join"></button>
   </div>
   <div id="pane-invite">
-    <div id="qr"></div>
-    <div id="room-label"><small data-i18n="room_name_hint"></small>
-      <input id="room-name-input" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false"></div>
-    <button id="copy-btn" class="block minor" data-i18n="copy_link"></button>
-    <button id="leave-btn" class="block" data-i18n="leave_room"></button>
+    <div id="room-create">
+      <div class="modal-note" data-i18n="room_auto_hint"></div>
+      <button id="create-room-btn" class="block primary" data-i18n="create_room"></button>
+    </div>
+    <div id="room-active">
+      <div id="qr"></div>
+      <div id="room-label"><small data-i18n="room_name_hint"></small>
+        <input id="room-name-input" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false"></div>
+      <button id="copy-btn" class="block minor" data-i18n="copy_link"></button>
+      <button id="leave-btn" class="block" data-i18n="back_to_local"></button>
+      <div class="modal-note" data-i18n="invite_note"></div>
+    </div>
     <button id="clear-btn" class="block" data-i18n="leave_clear"></button>
-    <div class="modal-note" data-i18n="invite_note"></div>
   </div>
   <div id="pane-join">
     <button id="scan-btn" class="block primary" data-i18n="scan_join"></button>
@@ -468,6 +479,7 @@
   <div id="scan-tip" data-i18n="scan_tip"></div>
   <button id="scan-cancel">✕</button>
 </div>
+<div id="drophint"><div id="drophint-box" data-i18n="drop_hint"></div></div>
 <div id="idmask"><div id="id-card">
   <div id="id-av"></div>
   <h3 data-i18n="edit_identity"></h3>

@@ -45,6 +45,7 @@ zh: {
   leave_room:'退出组队', room:'房间', team_room:'组队房',
   invite_note:'对方点「组队 → 扫码/加入」扫这个码即可加入',
   room_name_hint:'房间名 · 各设备用同一个,可自定义', join_note:'房码在对方的「组队」弹层里',
+  create_room:'创建私密房间', back_to_local:'返回本网', room_auto_hint:'同一 WiFi 的设备已自动出现，无需组队。组队用于连接不同网络、或被路由器隔离的设备。', drop_hint:'松开即发送到当前会话',
 },
 'zh-TW': {
   app_title:'近傳', hero_title:'同一 WiFi，打開即傳',
@@ -67,6 +68,7 @@ zh: {
   leave_room:'退出組隊', room:'房間', team_room:'組隊房',
   invite_note:'對方點「組隊 → 掃碼/加入」掃這個碼即可加入',
   room_name_hint:'房間名 · 各裝置用同一個,可自訂', join_note:'房碼在對方的「組隊」視窗裡',
+  create_room:'建立私密房間', back_to_local:'返回本網', room_auto_hint:'同一 WiFi 的裝置已自動出現，無需組隊。組隊用於連接不同網路、或被路由器隔離的裝置。', drop_hint:'放開即傳送到目前對話',
   save:'儲存', received:'已接收', sent_ok:'已傳送',
 },
 en: {
@@ -92,6 +94,7 @@ en: {
   leave_room:'Leave room', room:'Room', team_room:'Team room',
   invite_note:'On their device: Pair → Scan / Join → scan this code',
   room_name_hint:'Room name · same on all your devices, editable', join_note:'The room code is on the other device’s Pair sheet',
+  create_room:'Create private room', back_to_local:'Back to local network', room_auto_hint:'Devices on the same Wi-Fi appear automatically — no pairing needed. Use Team up to reach devices on another network or isolated by the router.', drop_hint:'Drop to send to this chat',
 },
 es: {
   app_title:'Zap', hero_title:'Misma Wi-Fi, abre y envía',
