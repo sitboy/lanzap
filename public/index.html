@@ -290,8 +290,8 @@
     header .hside { width:auto; }
     #rename, #scan-top { display:none; }
     #peers { display:none; }         /* 桌面用中栏设备列表,隐藏横向设备条 */
-    #hero .alt a[data-act=scan] { display:none; }  /* 桌面无后摄,隐藏扫一扫 */
-    #hero-scan { display:none; }
+    /* 桌面无后摄:主按钮改成"出示二维码给手机扫",隐藏重复的 qr 小链接 */
+    #hero .alt a[data-act=qr] { display:none; }
     .avatar { width:36px; height:36px; border-radius:8px; }
     footer { padding:6px 14px 10px; display:flex; flex-direction:column; }
     #tools { display:flex; padding:4px 0 2px; gap:2px; }

@@ -16,9 +16,16 @@ function applyI18n() {
   $('lang').textContent = LANG.split('-')[0].toUpperCase();
   document.title = t('app_title') + (LANG.startsWith('zh') ? ' Zap' : '');
   $('hero-desc').innerHTML = t('hero_desc', { url: `<b>${location.host}</b>` });
-  if (window.__room) {
-    $('foot-note').textContent = t('direct') + ' · ' + t(window.__manual ? 'team_room' : 'room') + ' ' + window.__room;
-  }
+  // 桌面首屏无后摄:主按钮=出示二维码(复用现有 hero_qr 键,18 语言都有)
+  const hs = $('hero-scan');
+  if (hs) hs.querySelector('span').textContent = t(isDesktopLayout() ? 'hero_qr' : 'hero_scan');
+  updateRoomState();
+}
+// 房间状态一行:只在"手动房码房"里显示房码——看见房码=在共享房,看不见=在本网络。干净可讲
+function updateRoomState() {
+  $('foot-note').textContent = window.__manual && window.__room
+    ? t('direct') + ' · ' + t('room') + ' ' + window.__room
+    : t('direct');
 }
 
 /* 语言菜单:选择即热切换 */
@@ -372,7 +379,8 @@ document.getElementById('scan-btn').onclick = startScan;
 document.getElementById('scan-cancel').onclick = stopScan;
 
 /* 空态引导(M1)与顶栏/中栏入口 */
-document.getElementById('hero-scan').onclick = startScan;
+// 首屏主按钮:手机=扫码连接对方;桌面(无后摄)=亮出自己二维码让手机扫
+document.getElementById('hero-scan').onclick = () => isDesktopLayout() ? showInvite('invite') : startScan();
 document.getElementById('scan-top').onclick = startScan;
 document.querySelector('#hero .alt a[data-act=code]').onclick = () => {
   showInvite('join'); setTimeout(() => codeInput.focus(), 100);
@@ -403,9 +411,7 @@ function connect() {
   ws.onmessage = async e => {
     const m = JSON.parse(e.data);
     if (m.type === 'peers') {
-      if (m.room) { window.__room = m.room; window.__manual = !!m.manual;
-        const fn = document.getElementById('foot-note');
-        fn.textContent = t('direct') + ' · ' + t(m.manual ? 'team_room' : 'room') + ' ' + m.room; }
+      if (m.room) { window.__room = m.room; window.__manual = !!m.manual; updateRoomState(); }
       for (const p of m.peers) addPeer(p, true);   // 我是后来者:向已在场者发起连接
       renderPeers();
     } else if (m.type === 'peer-joined') {
