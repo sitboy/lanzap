@@ -56,7 +56,7 @@ wss.on('connection', (ws, req) => {
   const autoKey = roomKey(req);
   let room = null, key = null, peerId = null;
 
-  const peersInfo = () => [...room.entries()].map(([id, s]) => ({ id, name: s._name, ua: s._ua }));
+  const peersInfo = () => [...room.entries()].map(([id, s]) => ({ id, name: s._name, ua: s._ua, hue: s._hue }));
   const sendTo = (id, obj) => { const s = room.get(id); if (s && s.readyState === 1) s.send(JSON.stringify(obj)); };
   const broadcast = (obj, exceptId) => {
     if (!room) return;
@@ -83,16 +83,18 @@ wss.on('connection', (ws, req) => {
       peerId = String(m.id).slice(0, 40);
       ws._name = String(m.name || '设备').slice(0, 40);
       ws._ua = String(m.ua || '').slice(0, 20);
+      ws._hue = (typeof m.hue === 'number' && m.hue >= 0 && m.hue < 360) ? m.hue : undefined;
       // 同 id 重连:顶掉旧连接
       const old = room.get(peerId); if (old && old !== ws) try { old.close(); } catch {}
       room.set(peerId, ws);
       ws.send(JSON.stringify({ type: 'peers', you: peerId,
         room: manual ? m.room : roomCode(key), manual,
         peers: peersInfo().filter(p => p.id !== peerId) }));
-      broadcast({ type: 'peer-joined', peer: { id: peerId, name: ws._name, ua: ws._ua } }, peerId);
+      broadcast({ type: 'peer-joined', peer: { id: peerId, name: ws._name, ua: ws._ua, hue: ws._hue } }, peerId);
     } else if (m.type === 'rename' && peerId) {
       ws._name = String(m.name || '').slice(0, 40) || ws._name;
-      broadcast({ type: 'peer-renamed', id: peerId, name: ws._name }, peerId);
+      if (typeof m.hue === 'number' && m.hue >= 0 && m.hue < 360) ws._hue = m.hue;
+      broadcast({ type: 'peer-renamed', id: peerId, name: ws._name, hue: ws._hue }, peerId);
     } else if (m.type === 'signal' && peerId && m.to) {
       // WebRTC offer/answer/ice 中转 —— 服务器可见的唯一"内容"就是这几百字节握手
       sendTo(m.to, { type: 'signal', from: peerId, data: m.data });

@@ -83,12 +83,40 @@ function defaultName(id) {
 }
 let myName = localStorage.deviceName || defaultName(myId);
 if (!localStorage.deviceName) localStorage.deviceName = myName;
+let myHue = localStorage.deviceHue != null ? +localStorage.deviceHue : null;   // 自定义色相(null=默认)
+function peerHue(id) { const p = peers.get(id); return p ? p.hue : undefined; }
 document.getElementById('back').onclick = () => switchConv('all');
-$('rename').onclick = () => {
-  const n = prompt(t('rename_prompt'), myName);
-  if (n && n.trim()) { myName = n.trim().slice(0, 20); localStorage.deviceName = myName;
-    ws && ws.readyState === 1 && ws.send(JSON.stringify({ type: 'rename', name: myName }));
-    renderPeers(); }
+// 身份编辑面板:改名 + 换色 + 保存并广播(实时同步给房里其他设备,服务器只转发不存)
+const SWATCHES = [null, 210, 265, 28, 330];   // null=品牌绿;蓝/紫/橙/粉
+let pendingHue = myHue;
+function openIdentity() {
+  pendingHue = myHue;
+  document.getElementById('id-name').value = myName;
+  document.getElementById('id-av').innerHTML = avatarSvg(myKind, true, myId, pendingHue);
+  const sw = document.getElementById('id-swatches');
+  sw.innerHTML = SWATCHES.map(h => {
+    const bg = h == null ? 'linear-gradient(150deg,#12C88B,#0E9E6E)' : `hsl(${h},70%,50%)`;
+    return `<div class="id-sw${h === pendingHue ? ' on' : ''}" data-h="${h}" style="background:${bg}"></div>`;
+  }).join('');
+  sw.querySelectorAll('.id-sw').forEach(el => el.onclick = () => {
+    pendingHue = el.dataset.h === 'null' ? null : +el.dataset.h;
+    sw.querySelectorAll('.id-sw').forEach(x => x.classList.remove('on')); el.classList.add('on');
+    document.getElementById('id-av').innerHTML = avatarSvg(myKind, true, myId, pendingHue);
+  });
+  document.getElementById('idmask').classList.add('show');
+}
+$('rename').onclick = openIdentity;
+document.getElementById('id-close').onclick = () => document.getElementById('idmask').classList.remove('show');
+document.getElementById('idmask').onclick = e => { if (e.target.id === 'idmask') e.target.classList.remove('show'); };
+document.getElementById('id-save').onclick = () => {
+  const n = document.getElementById('id-name').value.trim().slice(0, 20);
+  if (n) { myName = n; localStorage.deviceName = n; }
+  myHue = pendingHue;
+  if (myHue == null) delete localStorage.deviceHue; else localStorage.deviceHue = myHue;
+  ws && ws.readyState === 1 && ws.send(JSON.stringify({ type: 'rename', name: myName, hue: myHue != null ? myHue : undefined }));
+  document.getElementById('idmask').classList.remove('show');
+  renderPeers();
+  const sa = document.getElementById('side-avatar'); if (sa) { sa.innerHTML = avatarSvg(myKind, true, myId, myHue); sa.title = myName; }
 };
 
 /* ── 本地历史(IndexedDB:文字+文件元数据;文件内容不持久化) ── */
@@ -154,13 +182,14 @@ const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','
 
 /* 头像:自己=品牌绿渐变;他人=其 id 派生的独特色相(每台一色,人人算出同一个,无需存储) */
 let _gid = 0;
-function avatarSvg(kind, me, id) {
+function avatarSvg(kind, me, id, hue) {
   const glyph = kind === 'mobile'
     ? '<rect x="14" y="9" width="12" height="21" rx="2.5" fill="none" stroke="#fff" stroke-width="2"/><circle cx="20" cy="26" r="1.4" fill="#fff"/>'
     : '<rect x="8" y="10" width="24" height="15" rx="2" fill="none" stroke="#fff" stroke-width="2"/><path d="M16 30h8M20 25v5" stroke="#fff" stroke-width="2" stroke-linecap="round"/>';
   const g = 'g' + (++_gid);
-  const stops = me ? ['#12C88B', '#0E9E6E']
-    : [`hsl(${hueOf(id)},70%,57%)`, `hsl(${hueOf(id)},72%,43%)`];
+  const h = (hue != null) ? hue : (me ? null : hueOf(id));
+  const stops = h == null ? ['#12C88B', '#0E9E6E']    // 自己默认=品牌绿;自定义/他人=色相
+    : [`hsl(${h},70%,57%)`, `hsl(${h},72%,43%)`];
   return `<svg viewBox="0 0 40 40"><defs><linearGradient id="${g}" x1="0" y1="0" x2="1" y2="1">
     <stop offset="0" stop-color="${stops[0]}"/><stop offset="1" stop-color="${stops[1]}"/></linearGradient></defs>
     <rect width="40" height="40" rx="10" fill="url(#${g})"/>${glyph}</svg>`;
@@ -206,7 +235,7 @@ function addText(m, mine) {
   timeDivider(m.ts);
   const row = document.createElement('div');
   row.className = 'row' + (mine ? ' me' : '');
-  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (m.kind || 'mobile'), mine, m.fromId)}</div><div class="wrap">
+  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (m.kind || 'mobile'), mine, m.fromId, mine ? myHue : peerHue(m.fromId))}</div><div class="wrap">
     <div class="dev">${mine ? '' : esc(m.from)}</div><div class="bubble text"></div></div>`;
   row.querySelector('.bubble').textContent = m.text;
   list.appendChild(row); scrollBottom();
@@ -221,7 +250,7 @@ function fileCard(meta, role) {
   const head = mine ? `<span class="fc-share">↑ ${t('you_shared')}</span>`
                     : `<span class="fc-share">${esc(meta.from || '')} ${t('shared')}</span>`;
   const thumbHtml = meta.thumb ? `<div class="fc-thumb"><img src="${meta.thumb}"></div>` : '';
-  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (meta.kind || 'mobile'), mine, meta.fromId)}</div>
+  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (meta.kind || 'mobile'), mine, meta.fromId, mine ? myHue : peerHue(meta.fromId))}</div>
     <div class="wrap"><div class="dev">${mine ? '' : esc(meta.from || '')}</div>
     <div class="bubble file">
       <div class="fc-head">${head}</div>
@@ -502,6 +531,7 @@ function connect() {
   ws.onopen = () => ws.send(JSON.stringify({ type: 'hello', id: myId, name: myName,
     room: urlRoom ? urlRoom.toUpperCase() : undefined,
     lan: window.__lanKey || undefined,     // 尽力而为:读到本地子网就带上,让代理设备同子网重聚
+    hue: myHue != null ? myHue : undefined,
     ua: /iPhone|iPad|Android/.test(navigator.userAgent) ? 'mobile' : 'desktop' }));
   ws.onmessage = async e => {
     const m = JSON.parse(e.data);
@@ -522,7 +552,7 @@ function connect() {
                peers.delete(m.id);
                if (currentConv === m.id) switchConv('all'); else renderPeers(); }
     } else if (m.type === 'peer-renamed') {
-      const p = peers.get(m.id); if (p) { p.name = m.name; renderPeers(); }
+      const p = peers.get(m.id); if (p) { p.name = m.name; if (m.hue != null) p.hue = m.hue; renderPeers(); }
     } else if (m.type === 'signal') {
       handleSignal(m.from, m.data);
     }
@@ -539,7 +569,7 @@ function renderPeers() {
   peersBar.innerHTML = '';
   const selfEl = document.createElement('div');
   selfEl.className = 'peer self' + (currentConv === 'all' ? ' cur' : '');
-  selfEl.innerHTML = `<div class="pa">${avatarSvg(myKind, true)}<div class="dot on"></div>${badgeHtml('all')}</div>
+  selfEl.innerHTML = `<div class="pa">${avatarSvg(myKind, true, myId, myHue)}<div class="dot on"></div>${badgeHtml('all')}</div>
     <div class="pn">${esc(myName)}</div>`;
   selfEl.onclick = () => switchConv('all');
   peersBar.appendChild(selfEl);
@@ -548,7 +578,7 @@ function renderPeers() {
     const el = document.createElement('div');
     el.className = 'peer' + (currentConv === id ? ' cur' : '');
     const dotCls = p.dc && p.dc.readyState === 'open' ? ' on' : '';   // 连上=绿,连接中=无色
-    el.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false, id)}
+    el.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false, id, p.hue)}
       <div class="dot${dotCls}"></div>${badgeHtml(id)}</div>
       <div class="pn">${esc(p.name)}</div>`;
     el.onclick = () => switchConv(id);
@@ -577,7 +607,7 @@ function renderPeers() {
     dl.appendChild(allRow);
     const selfRow = document.createElement('div');
     selfRow.className = 'dl-row selfrow';
-    selfRow.innerHTML = `<div class="pa">${avatarSvg(myKind, true)}<div class="dot on"></div></div>
+    selfRow.innerHTML = `<div class="pa">${avatarSvg(myKind, true, myId, myHue)}<div class="dot on"></div></div>
       <div class="di"><div class="dn">${esc(myName)}</div><div class="ds">${t('self_tag')}</div></div>`;
     dl.appendChild(selfRow);
     for (const [id, p] of peers) {
@@ -585,7 +615,7 @@ function renderPeers() {
       const on = p.dc && p.dc.readyState === 'open';
       const row = document.createElement('div');
       row.className = 'dl-row' + (currentConv === id ? ' cur' : '');
-      row.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false, id)}
+      row.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false, id, p.hue)}
         <div class="dot${on ? ' on' : ''}"></div>${badgeHtml(id)}</div>
         <div class="di"><div class="dn">${esc(p.name)}</div>
         <div class="ds${on ? ' on' : ''}">${t(on ? 'st_on' : 'st_mid')}</div></div>`;
@@ -603,7 +633,7 @@ function visiblePeerCount() { let n = 0; for (const [, p] of peers) if (!p.stuck
 /* ── WebRTC mesh ── */
 function addPeer(info, initiator) {
   if (peers.has(info.id)) return;
-  const p = { name: info.name, ua: info.ua, pc: null, dc: null, queue: [], sending: false, recv: null,
+  const p = { name: info.name, ua: info.ua, hue: info.hue, pc: null, dc: null, queue: [], sending: false, recv: null,
               stuck: false };
   peers.set(info.id, p);
   // 10 秒连不上=大概率不同网络(本工具零 STUN,只做局域网直连):从列表隐去,不显示僵尸条
@@ -839,7 +869,7 @@ function renderOffer(meta) {
 /* ── 桌面边栏 ── */
 const sideAvatar = document.getElementById('side-avatar');
 if (sideAvatar) {
-  sideAvatar.innerHTML = avatarSvg(myKind, true);
+  sideAvatar.innerHTML = avatarSvg(myKind, true, myId, myHue);
   sideAvatar.title = myName;
   sideAvatar.onclick = $('rename').onclick;
   document.getElementById('nav-invite').onclick = () => showInvite();

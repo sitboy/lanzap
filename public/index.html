@@ -233,6 +233,28 @@
   #code-go.on { background:var(--brand); color:#fff; }
   .modal-note { font-size:11px; color:var(--ink-3); margin-top:12px; line-height:1.6; }
 
+  /* 身份编辑面板 */
+  #idmask { display:none; position:fixed; inset:0; background:rgba(10,12,14,.5); z-index:55;
+            align-items:center; justify-content:center; }
+  #idmask.show { display:flex; }
+  #id-card { background:var(--card); border-radius:var(--r-modal); padding:24px 26px 16px;
+             width:312px; text-align:center; position:relative; box-shadow:0 16px 48px rgba(10,12,14,.28); }
+  #id-av { width:64px; height:64px; margin:0 auto 12px; }
+  #id-av svg { width:100%; height:100%; }
+  #id-card h3 { font-size:17px; font-weight:700; margin-bottom:14px; }
+  #id-name { width:100%; border:1.5px solid var(--line); border-radius:10px; height:44px;
+             background:var(--card); color:var(--ink); text-align:center; font-size:16px; outline:none; }
+  #id-name:focus { border-color:var(--brand); }
+  .id-label { font-size:12px; color:var(--ink-3); text-align:left; margin:16px 0 8px; }
+  #id-swatches { display:flex; gap:10px; justify-content:center; margin-bottom:6px; }
+  .id-sw { width:34px; height:34px; border-radius:9px; cursor:pointer; border:2.5px solid transparent; }
+  .id-sw.on { border-color:var(--ink); }
+  #id-card button.block { display:block; width:100%; border:none; border-radius:10px; height:44px;
+    font-size:15px; cursor:pointer; margin-top:14px; }
+  #id-card .primary { background:linear-gradient(150deg,var(--brand-hi),var(--brand-2)); color:#fff; font-weight:600; }
+  #id-close { position:absolute; top:10px; right:10px; width:32px; height:32px; border:none;
+    background:none; color:var(--ink-3); font-size:15px; cursor:pointer; }
+
   /* 语言菜单浮层 */
   #langmenu { display:none; position:fixed; z-index:70; background:var(--card);
     border-radius:12px; box-shadow:0 10px 36px rgba(10,12,14,.22); padding:6px;
@@ -443,6 +465,16 @@
   <div id="scan-tip" data-i18n="scan_tip"></div>
   <button id="scan-cancel">✕</button>
 </div>
+<div id="idmask"><div id="id-card">
+  <div id="id-av"></div>
+  <h3 data-i18n="edit_identity"></h3>
+  <input id="id-name" maxlength="20" autocomplete="off">
+  <div class="id-label" data-i18n="pick_color"></div>
+  <div id="id-swatches"></div>
+  <button id="id-save" class="block primary" data-i18n="save_broadcast"></button>
+  <div class="modal-note" data-i18n="id_sync_note"></div>
+  <button id="id-close">✕</button>
+</div></div>
 <script src="i18n.js"></script>
 <script src="qrcode.min.js"></script>
 <script src="app.js"></script>
