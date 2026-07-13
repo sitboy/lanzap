@@ -92,6 +92,9 @@ wss.on('connection', (ws, req) => {
       ws._slot = (old && old._slot != null) ? old._slot : pickSlot();
       if (old && old !== ws) try { old.close(); } catch {}
       room.set(peerId, ws);
+      // 诊断(按需):看每台设备真实呈现的出口/房间键,定位"同网却分家"的真因。LANZAP_DEBUG=1 才开
+      if (process.env.LANZAP_DEBUG)
+        console.log(`[room] ${new Date().toISOString()} ip=${clientIp(req)} key=${key} room#=${room.size} ua=${ws._ua} name=${ws._name}`);
       ws.send(JSON.stringify({ type: 'peers', you: peerId, slot: ws._slot,
         room: manual ? m.room : roomCode(key), manual,
         peers: peersInfo().filter(p => p.id !== peerId) }));
