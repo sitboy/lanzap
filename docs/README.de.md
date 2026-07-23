@@ -39,6 +39,7 @@ Deutsch ·
 
 - 🚀 **Keine App, kein Login, keine Kontakte hinzufügen** — einfach die URL im Browser öffnen
 - 🔒 **Dateien berühren nie den Server** — direktes P2P, keine Größenbeschränkung, keine Neukomprimierung; der Server speichert weder Daten noch Logs
+- 📁 **Ganze Ordner, Struktur bleibt erhalten** — hineinziehen oder auswählen; auf Chromium am Desktop landet der Ordnerbaum direkt wieder auf der Festplatte, andere Browser bekommen ein ZIP
 - 👥 **Gruppen- und Privatchats** — ein „Alle"-Raum plus ein privater Thread mit jedem Gerät
 - 📷 **Drei Möglichkeiten zum Koppeln** — automatische Erkennung im selben Netzwerk / QR-Scan direkt auf der Seite / 5-stelliger Raumcode / teilbarer Link
 - 🌍 **18 Sprachen**, sofort umschaltbar; 🌗 der **Dunkelmodus** folgt dem System
@@ -83,9 +84,13 @@ server {
 
 Reine LAN-Direktverbindung (kein STUN/TURN jeglicher Art), daher funktionieren Übertragungen **nur innerhalb desselben Netzwerks**. Öffnet man den Link aus unterschiedlichen Netzwerken, landen trotzdem alle im selben Raum und sehen sich gegenseitig, können sich aber nicht direkt verbinden — die Oberfläche weist nach ~10 s klar darauf hin, statt endlos zu laden.
 
+**Empfangen** können Ordner alle Browser, zum **Senden** braucht es aber einen Ordner-Dialog: iOS-Safari hat keinen, dort ist der Einstieg deshalb ausgeblendet. Pro Ordner sind 2000 Dateien das Limit — darüber wirst du gebeten, ihn selbst zu packen, statt dass stillschweigend ein Teil wegfällt.
+
 ## Funktionsweise
 
 Das Signaling steckt in `server.js` (`ws`; gruppiert Geräte nach ausgehender IP / IPv6‑64-Präfix, ein manueller Raumcode überschreibt das) plus das Frontend in `public/` (WebRTC-Mesh, 64‑KB-Chunking mit Backpressure; QR-Scan bevorzugt `BarcodeDetector` und fällt sonst auf jsQR zurück). Das Designsystem liegt in `design/`.
+
+Ein Ordner wird vor dem Senden **nicht** verpackt: Er läuft als Stapel gewöhnlicher Dateien, jede mit ihrem Pfad relativ zur Ordnerwurzel — dadurch funktionieren Fortschritt pro Datei, Gegendruck und Reconnect unverändert weiter. Nur der letzte Schritt, das Schreiben auf die Platte, verzweigt sich je nach Plattform: File System Access schreibt den Baum direkt (streamend, nichts bleibt im Speicher), alles andere sammelt `public/zip.js` (~130 Zeilen, ohne Abhängigkeit) in einem unkomprimierten ZIP. Eingehende Pfade gelten als feindliche Eingabe und werden bereinigt, sodass nichts aus dem Zielordner ausbrechen kann; ist die Platte langsamer als das Netz, bremst der Empfänger den Sender aus, statt den Rückstau im RAM zu stapeln.
 
 ## Lizenz
 

@@ -39,6 +39,7 @@ Polski ·
 
 - 🚀 **Bez aplikacji, bez logowania, bez dodawania kontaktów** — wystarczy otworzyć URL w przeglądarce
 - 🔒 **Pliki nigdy nie dotykają serwera** — bezpośrednie P2P, brak limitu rozmiaru, bez ponownej kompresji; serwer nie przechowuje żadnych danych ani logów
+- 📁 **Całe foldery, ze strukturą** — przeciągnij albo wskaż; w Chromium na komputerze folder trafia z powrotem na dysk jako prawdziwe drzewo katalogów, w innych przeglądarkach dostajesz ZIP
 - 👥 **Czaty grupowe i prywatne** — jeden pokój „Wszyscy" plus prywatny wątek z każdym urządzeniem
 - 📷 **Trzy sposoby parowania** — automatyczne wykrywanie w tej samej sieci / skanowanie QR na stronie / 5‑znakowy kod pokoju / link do udostępnienia
 - 🌍 **18 języków**, przełączanych na miejscu; 🌗 **tryb ciemny** podąża za systemem
@@ -83,9 +84,13 @@ server {
 
 Czyste bezpośrednie połączenie w sieci lokalnej (bez jakiegokolwiek STUN/TURN), więc przesyłanie działa **tylko w obrębie tej samej sieci**. Otwarcie linku między różnymi sieciami nadal umieszcza wszystkich w tym samym pokoju i widzą się nawzajem, ale nie mogą połączyć się bezpośrednio — interfejs mówi o tym wyraźnie po ~10 s, zamiast kręcić się w nieskończoność.
 
+Foldery **odbierze** każda przeglądarka, ale do **wysłania** potrzebny jest systemowy wybór folderu: Safari na iOS go nie ma, więc tam to wejście jest ukryte. Limit to 2000 plików na folder — powyżej dostaniesz wyraźną prośbę o samodzielne spakowanie, zamiast po cichu stracić część zawartości.
+
 ## Jak to działa
 
 Sygnalizacja w `server.js` (`ws`; grupuje urządzenia po adresie IP wyjścia / prefiksie IPv6‑64, ręczny kod pokoju to nadpisuje) plus front‑end w `public/` (mesh WebRTC, fragmentacja 64 KB z kontrolą przeciwciśnienia; skanowanie QR preferuje `BarcodeDetector`, a w razie potrzeby wraca do jsQR). System projektowy znajduje się w `design/`.
+
+Folder **nie** jest pakowany przed wysyłką: wędruje jako partia zwykłych plików, każdy ze swoją ścieżką względem katalogu głównego, dzięki czemu postęp per plik, kontrola przepływu i wznawianie połączenia działają bez zmian. Tylko ostatni krok — zapis na dysk — rozgałęzia się zależnie od platformy: File System Access zapisuje drzewo bezpośrednio (strumieniowo, nic nie zostaje w pamięci), a w pozostałych przypadkach `public/zip.js` (~130 linii, bez zależności) składa wszystko w nieskompresowany ZIP. Przychodzące ścieżki traktujemy jak wrogie dane wejściowe i czyścimy, więc nic nie wyjdzie poza katalog docelowy; a gdy dysk jest wolniejszy niż sieć, odbiorca przyhamowuje nadawcę, zamiast piętrzyć zaległości w RAM-ie.
 
 ## Licencja
 

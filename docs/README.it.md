@@ -39,6 +39,7 @@ Italiano ·
 
 - 🚀 **Nessuna app, nessun login, nessun contatto da aggiungere** — basta aprire l'URL in un browser
 - 🔒 **I file non toccano mai il server** — P2P diretto, nessun limite di dimensione, nessuna ricompressione; il server non conserva né dati né log
+- 📁 **Cartelle intere, struttura inclusa** — trascinala o selezionala; su Chromium desktop viene riscritta su disco come cartella vera, gli altri browser ricevono uno ZIP
 - 👥 **Chat di gruppo e private** — una stanza "Everyone" più un thread privato con ogni dispositivo
 - 📷 **Tre modi per accoppiarsi** — rilevamento automatico sulla stessa rete / scansione QR in pagina / codice stanza a 5 caratteri / link condivisibile
 - 🌍 **18 lingue**, cambiabili al volo; 🌗 **modalità scura** che segue il sistema
@@ -86,12 +87,16 @@ Connessione diretta puramente LAN (nessun STUN/TURN di alcun tipo), quindi i tra
 stessa stanza e possono vedersi a vicenda, ma non possono connettersi direttamente — l'interfaccia
 lo comunica chiaramente dopo circa 10 s invece di girare all'infinito.
 
+**Ricevere** una cartella funziona su tutti i browser, ma per **inviarla** serve un selettore di cartelle: Safari su iOS non ce l’ha, quindi lì la voce è nascosta. Il limite è di 2000 file per cartella; oltre quella soglia ti viene chiesto di comprimerla tu, invece di perderne un pezzo in silenzio.
+
 ## Come funziona
 
 Il signaling è in `server.js` (`ws`; raggruppa i dispositivi per IP di uscita / prefisso IPv6‑64,
 un codice stanza manuale ha la precedenza) più il front end in `public/` (mesh WebRTC, chunking a
 64 KB con back‑pressure; la scansione QR preferisce `BarcodeDetector` e ripiega su jsQR). Il design
 system vive in `design/`.
+
+La cartella **non** viene impacchettata prima dell’invio: viaggia come un lotto di file normali, ognuno con il proprio percorso relativo alla radice, così avanzamento per file, back-pressure e riconnessione continuano a funzionare identici. Solo l’ultimo passo — la scrittura su disco — si dirama per piattaforma: File System Access scrive l’albero direttamente (in streaming, senza trattenere nulla in memoria), tutto il resto finisce in uno ZIP non compresso creato da `public/zip.js` (~130 righe, zero dipendenze). I percorsi in arrivo sono trattati come input ostile e ripuliti, quindi nulla può uscire dalla cartella di destinazione; se il disco è più lento della rete, chi riceve rallenta chi invia anziché accumulare l’arretrato in RAM.
 
 ## Licenza
 

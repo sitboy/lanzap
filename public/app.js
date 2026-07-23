@@ -19,6 +19,9 @@ function applyI18n() {
   // 桌面首屏无后摄:主按钮=出示二维码(复用现有 hero_qr 键,18 语言都有)
   const hs = $('hero-scan');
   if (hs) hs.querySelector('span').textContent = t(isDesktopLayout() ? 'hero_qr' : 'hero_scan');
+  const at = $('attach'), ad = $('attach-dir');       // 工具行两个图标按钮:靠 title 说明用途
+  if (at) at.title = t('send_file');
+  if (ad) ad.title = t('send_folder');
   updateRoomState();
 }
 // 房间状态一行:自动房=本网;手动房码房=房间 CODE。看见房码=在共享房,否则在本网络。
@@ -31,6 +34,8 @@ function updateRoomState() {
 function clearHistory() {
   if (!confirm(t('clear_confirm'))) return;
   msgs = []; myFiles.clear(); offerCards.clear(); recvBlobs.clear();
+  for (const st of recvBatches.values()) clearTimeout(st.stall);
+  myBatches.clear(); batchCards.clear(); recvBatches.clear(); doneBatches.clear();
   if (db) try { db.transaction('msgs', 'readwrite').objectStore('msgs').clear(); } catch {}
   renderConv();
   document.getElementById('mask').classList.remove('show');
@@ -253,6 +258,7 @@ function renderConv() {
   lastTs = 0;
   msgs.filter(m => (m.conv || 'all') === currentConv).slice(-200).forEach(m => {
     if (m.type === 'text') addText(m, !!m.me);
+    else if (m.type === 'folder') renderFolderMsg(m);
     else if (m.me) {                          // 我发过的文件
       const c = fileCard(m, 'self');
       const info = myFiles.get(m.fileId);
@@ -305,6 +311,89 @@ function autoSave(blob, name, fileId) {
     return true;
   } catch { return false; }
 }
+/* ── 文件夹传输 ─────────────────────────────────────────────────────────────
+ * 模型:文件夹 = 一个 batch(清单 + N 个文件)。传输层仍是逐个文件走 fmeta+字节流,
+ * 不打包、不压缩——传出去的就是文件本身,所以逐文件进度、背压、重连全部沿用原有机制。
+ * 只有"落盘"这最后一步按平台能力分叉:
+ *   Chromium 桌面 → File System Access 真还原目录树(边收边写,零内存驻留)
+ *   其余浏览器    → 收进 STORE zip(不压缩),给一个保存按钮
+ * iOS 选不了文件夹(webkitdirectory 无效),故只收不发,发送入口在那里隐藏。 */
+const MAX_BATCH_FILES = 2000;                    // 单个文件夹的文件数上限(超出=拒绝,不静默截断)
+const ZIP_MAX_TOTAL = 2 * 1024 * 1024 * 1024;    // zip 兜底路径的总量上限:无 ZIP64,且浏览器内存本就扛不住更多
+const MAX_PATH_DEPTH = 32;
+// 接收端落盘背压水位。要和发送端的 HIGH_WATER(8MB, 单次在途上限)同量级:定高了就永不触发
+// ——积压量的天花板本来就是这批的总大小,水位若高过常见批次,这段流控等于死代码(实测 24MB 批次
+// 在 32MB 水位下从未限速)。8/2MB 下峰值内存 ≈ 积压 8MB + 在途 8MB,手机也扛得住。
+const FLOW_HIGH = 8 * 1024 * 1024, FLOW_LOW = 2 * 1024 * 1024;
+const STALL_MS = 25000;                          // 这么久没收到新字节 = 传输中断
+const canDirSave = typeof window.showDirectoryPicker === 'function';
+const canPickDir = !isIOS && 'webkitdirectory' in HTMLInputElement.prototype;
+
+// 路径消毒:path 完全来自对端,必须当敌意输入处理。逐段清洗并丢弃 .. 与绝对路径根,
+// 保证还原出来的文件只可能落在目标目录内部。返回路径段数组(可能为空,调用方兜底)。
+const WIN_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i;
+function safeSegs(raw) {
+  return String(raw == null ? '' : raw)
+    .replace(/\\/g, '/').split('/')
+    .filter(s => s && s !== '.' && s !== '..')            // 去掉 .. 和空段(绝对路径的前导 / 在此消失)
+    .map(s => s.replace(/[ -<>:"|?*]/g, '_'))   // 控制字符 + 各平台非法字符
+    .map(s => s.replace(/[. ]+$/, ''))                    // Windows 不允许结尾的点或空格
+    .filter(Boolean)
+    .map(s => WIN_RESERVED.test(s) ? '_' + s : s)         // CON / PRN / COM1… 保留名
+    .map(s => s.length > 100 ? s.slice(0, 100) : s)
+    .slice(0, MAX_PATH_DEPTH);
+}
+const safeName = raw => (safeSegs(raw)[0] || 'folder');
+
+/* 落盘目标:两种实现同一个接口
+ *   file(segs, lastModified) → {write(u8), close()}   (可能返回 Promise)
+ *   finish() → {kind, name, blob?} */
+async function makeDirSink(root) {
+  const base = await window.showDirectoryPicker({ mode: 'readwrite', startIn: 'downloads' });
+  // 目标目录里已有同名文件夹就换个名,绝不覆盖用户已有内容
+  let name = root;
+  for (let n = 2; n < 100; n++) {
+    let taken = true;
+    try { await base.getDirectoryHandle(name, { create: false }); } catch { taken = false; }
+    if (!taken) break;
+    name = root + ' (' + n + ')';
+  }
+  const rootHandle = await base.getDirectoryHandle(name, { create: true });
+  const dirs = new Map();                       // 逐级缓存目录句柄,避免每个文件重走一遍全路径
+  async function ensureDir(segs) {
+    let h = rootHandle, key = '';
+    for (const s of segs) {
+      key += '/' + s;
+      let next = dirs.get(key);
+      if (!next) { next = await h.getDirectoryHandle(s, { create: true }); dirs.set(key, next); }
+      h = next;
+    }
+    return h;
+  }
+  return {
+    kind: 'dir', name,
+    async file(segs) {
+      const dir = await ensureDir(segs.slice(0, -1));
+      const fh = await dir.getFileHandle(segs[segs.length - 1], { create: true });
+      const w = await fh.createWritable();
+      return { write: c => w.write(c), close: () => w.close() };
+    },
+    async finish() { return { kind: 'dir', name }; },
+  };
+}
+function makeZipSink(root) {
+  const z = new ZipStore();
+  const name = root + '.zip';
+  return {
+    kind: 'zip', name,
+    file(segs, lastModified) {
+      const w = z.file(root + '/' + segs.join('/'), lastModified);
+      return { write: c => w.write(c), close: () => w.close() };
+    },
+    finish() { return { kind: 'zip', name, blob: z.finish() }; },
+  };
+}
+
 const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 /* 头像:自己=品牌绿渐变;他人=其 id 派生的独特色相(每台一色,人人算出同一个,无需存储) */
@@ -476,6 +565,139 @@ function fileCard(meta, role) {
 }
 // 兼容旧调用名(历史渲染等仍可能用到)
 function addFileBubble(meta, mine) { return fileCard(meta, mine ? 'self' : 'offer'); }
+
+function folderIconSvg() {
+  return `<svg viewBox="0 0 40 46">
+    <path d="M3 11a3 3 0 013-3h9.2l3.2 3.6H34a3 3 0 013 3v20.4a3 3 0 01-3 3H6a3 3 0 01-3-3z" fill="#F7B500"/>
+    <path d="M3 17.5h34v17.5a3 3 0 01-3 3H6a3 3 0 01-3-3z" fill="#FFCF4A"/>
+  </svg>`;
+}
+
+/* 文件夹卡:一张卡聚合整批(不为每个子文件建卡——几千个小文件会把 DOM 打死)。
+ * 与 fileCard 骨架相近但展示与状态都不同(文件计数 / 双保存路径 / 中断重试),
+ * 硬塞进 fileCard 会让它长出一堆 if,故独立实现,重复的只是模板那几行。 */
+function folderCard(meta, role) {
+  timeDivider(meta.ts || Date.now());
+  const mine = role === 'self';
+  const row = document.createElement('div');
+  row.className = 'row filecard' + (mine ? ' me' : '');
+  const head = mine ? `<span class="fc-share">↑ ${t('you_shared')}</span>`
+                    : `<span class="fc-share">${esc(meta.from || '')} ${t('shared')}</span>`;
+  row.innerHTML = `<div class="avatar">${avatarSvg(mine ? myKind : (meta.kind || 'mobile'), mine, meta.fromId, mine ? myColor() : peerHue(meta.fromId), mine ? mySlot : peerSlot(meta.fromId))}</div>
+    <div class="wrap"><div class="dev">${mine ? '' : esc(meta.from || '')}</div>
+    <div class="bubble file">
+      <div class="fc-head">${head}</div>
+      <div class="fmain">
+        <div class="finfo"><div class="fname"></div><div class="fsize"></div></div>
+        <div class="ficon">${folderIconSvg()}</div></div>
+      <div class="fc-act"></div>
+    </div></div>`;
+  row.querySelector('.fname').textContent = meta.root;
+  const sizeEl = row.querySelector('.fsize'), act = row.querySelector('.fc-act');
+  const summary = () => `${t('n_files', { n: meta.count })} · ${fmtSize(meta.totalSize)}`;
+  sizeEl.textContent = summary();
+  list.appendChild(row); scrollBottom();
+
+  let lastPaint = 0;                       // 进度重绘节流:几千个小文件时每块都写 DOM 会卡死界面
+  const api = {
+    // 待接收:Chromium 桌面给"保存到文件夹"(真目录还原);其余只有 ZIP
+    offer(onDownload) {
+      const zipOnly = !canDirSave;
+      const tooBig = meta.totalSize > ZIP_MAX_TOTAL;
+      if (zipOnly && tooBig) {             // 收不下:诚实说明,不给一个注定失败的按钮
+        act.innerHTML = `<span class="fc-off">${t('folder_too_big')}</span>`;
+        return;
+      }
+      act.innerHTML = canDirSave
+        ? `<button class="fc-btn go" data-m="dir">${t('save_to_folder')}</button>` +
+          (tooBig ? '' : `<button class="fc-btn ghost" data-m="zip">${t('download_zip')}</button>`)
+        : `<button class="fc-btn go" data-m="zip">${t('download_zip')}</button>`;
+      act.querySelectorAll('.fc-btn').forEach(b => b.onclick = () => onDownload(b.dataset.m));
+    },
+    preparing() { act.innerHTML = `<span class="fc-off">${t('preparing')}</span>`; },
+    waiting() { act.innerHTML = `<span class="fc-off">◷ ${t('waiting_accept')}</span>`; },
+    downloading(onCancel) {
+      act.innerHTML = `<div class="prog"><div></div></div>
+        <div class="fc-row"><span class="fc-pct">${t('receiving')}</span>${onCancel ? `<a class="fc-cancel">${t('cancel')}</a>` : ''}</div>`;
+      const c = act.querySelector('.fc-cancel'); if (c) c.onclick = onCancel;
+    },
+    progress(got, done, speed, force) {
+      const now = Date.now();
+      if (!force && now - lastPaint < 100) return;      // 节流:最多 10 帧/秒
+      lastPaint = now;
+      const bar = act.querySelector('.prog>div');
+      if (bar) bar.style.width = (meta.totalSize ? got / meta.totalSize * 100 : 100).toFixed(1) + '%';
+      const pct = act.querySelector('.fc-pct');
+      if (pct) pct.textContent = `${t('receiving')} ${done}/${meta.count}`;
+      sizeEl.textContent = `${fmtSize(got)} / ${fmtSize(meta.totalSize)}${speed ? ' · ' + fmtSize(speed) + '/s' : ''}`;
+    },
+    // 收完:目录模式已直接落到用户选的位置(无需再点);zip 模式默认已自动下载,按钮留作另存
+    saved(res, auto) {
+      const bar = act.querySelector('.prog>div'); if (bar) bar.style.width = '100%';
+      if (res.kind === 'dir') {
+        sizeEl.innerHTML = `<span class="ok">✓ ${t('saved_to_folder', { name: esc(res.name) })}</span>`;
+        act.innerHTML = '';
+      } else {
+        sizeEl.innerHTML = `<span class="ok">✓ ${t(auto ? 'saved_to' : 'received')} · ${fmtSize(meta.totalSize)}</span>`;
+        act.innerHTML = `<button class="fc-btn go">${t(auto ? 'save_as' : 'save_zip')}</button>`;
+        act.querySelector('.fc-btn').onclick = () => saveBlob(res.blob, res.name);
+      }
+      if (nearBottom()) scrollBottom();
+    },
+    sending() {
+      act.innerHTML = `<div class="prog"><div></div></div>
+        <div class="fc-row"><span class="fc-pct">${t('sending')}</span></div>`;
+    },
+    sendProgress(got, done, speed) {
+      const now = Date.now();
+      if (now - lastPaint < 100) return;
+      lastPaint = now;
+      const bar = act.querySelector('.prog>div');
+      if (bar) bar.style.width = (meta.totalSize ? got / meta.totalSize * 100 : 100).toFixed(1) + '%';
+      const pct = act.querySelector('.fc-pct');
+      if (pct) pct.textContent = `${t('sending')} ${done}/${meta.count}`;
+      sizeEl.textContent = `${fmtSize(got)} / ${fmtSize(meta.totalSize)}${speed ? ' · ' + fmtSize(speed) + '/s' : ''}`;
+    },
+    sent() {
+      const bar = act.querySelector('.prog>div'); if (bar) bar.style.width = '100%';
+      sizeEl.innerHTML = `<span class="ok">✓ ${t('sent_ok')} · ${summary()}</span>`;
+      act.innerHTML = '';
+    },
+    unavailable() {
+      row.querySelector('.bubble.file').classList.add('dim');
+      act.innerHTML = `<span class="fc-off">◷ ${t('sender_gone')}</span>`;
+    },
+    // 传到一半断了:说清已收多少,给重试(重试=重新向发送方拉整批)
+    interrupted(onRetry) {
+      row.querySelector('.bubble.file').classList.add('dim');
+      sizeEl.innerHTML = `<span class="fc-hint">${t('interrupted')}</span>`;
+      act.innerHTML = `<button class="fc-btn ghost">${t('retry')}</button>`;
+      act.querySelector('.fc-btn').onclick = onRetry;
+    },
+    expired(onResend) {
+      row.querySelector('.bubble.file').classList.add('dim');
+      sizeEl.innerHTML = `${summary()} · <span class="fc-hint">${t('offer_expired')}</span>`;
+      act.innerHTML = `<button class="fc-btn ghost">${t('resend')}</button>`;
+      act.querySelector('.fc-btn').onclick = onResend;
+    },
+    selfReceipt() {
+      sizeEl.innerHTML = `${summary()} · <span class="fc-hint">${t('keep_open')}</span>`;
+      api._dl = new Map();
+      act.innerHTML = `<div class="fc-recv"></div>`;
+      api._renderRecv();
+    },
+    _renderRecv() {
+      const box = act.querySelector('.fc-recv'); if (!box) return;
+      const n = api._dl ? api._dl.size : 0;
+      const avs = [...(api._dl || new Map()).entries()].slice(0, 5)
+        .map(([id]) => `<span class="fc-av">${avatarSvg('mobile', false, id, peerHue(id), peerSlot(id))}</span>`).join('');
+      box.innerHTML = n ? `${avs}<span class="fc-dln">${t('downloaded_by', { n })}</span>`
+                        : `<span class="fc-hint">${t('no_downloads_yet')}</span>`;
+    },
+    addDownloader(id) { if (api._dl && !api._dl.has(id)) { api._dl.set(id, 1); api._renderRecv(); } },
+  };
+  return api;
+}
 
 /* ── 组队:状态无状态化——房码只活在地址栏(#r=),不存 localStorage ──
  * 裸链接/新标签/隐私模式 一律回"本网络大房间";带 #r= 的链接才进对应共享房。
@@ -824,7 +1046,7 @@ const starPrefix = fp => isTrusted(fp) ? '<span class="star-in">★</span> ' : '
 function addPeer(info, initiator) {
   if (peers.has(info.id)) return;
   const p = { name: info.name, ua: info.ua, hue: info.hue, slot: info.slot, fp: info.fp, pc: null, dc: null, queue: [], sending: false, recv: null,
-              stuck: false };
+              stuck: false, paused: false, binc: null };
   peers.set(info.id, p);
   // 10 秒连不上:此设备是服务器牵的线(=同出口/同网络),却打洞失败→几乎必是二层被挡
   // (AP 隔离/访客网络/mDNS)。隐去僵尸条,但给一次可操作诊断,别让用户对着转圈发懵
@@ -922,6 +1144,92 @@ function setupDC(p, dc, id) {
         const f = myFiles.get(m.fileId); if (!f) return;
         f.card.addDownloader(m.fromId);
         streamFileTo({ id: m.fromId, name: m.from, ua: m.fromKind }, f.file, m.fileId);
+      /* ── 文件夹批 ──────────────────────────────────────────────
+       * 与单文件同构:群=通告(boffer)+按需拉(bpull),私聊=请求(bfreq)+直推。
+       * 差别只在"一批"这一层——子文件不单独建卡、不单独入历史,幂等键是 batchId。 */
+      } else if (m.t === 'boffer') {        // 群:文件夹通告(状态化,设备可达时会被补发)
+        if (markSeen(m.mid)) broadcastFrame(m, id);
+        if (m.fromId === myId) return;
+        if (knownBatch(m.batchId)) return;
+        const meta = { batchId: m.batchId, root: m.root, count: m.count, totalSize: m.totalSize,
+                       ts: m.ts, fromId: m.fromId, from: m.from, kind: m.fromKind };
+        pushMsg({ conv: 'all', type: 'folder', ...meta });
+        if (currentConv === 'all') renderFolderOffer(meta, 'all'); else bumpUnread('all');
+      } else if (m.t === 'bfreq') {         // 私聊:对方请求发文件夹给我
+        const ok = isTrusted(p.fp) || !recvPin() || m.pin === recvPin();
+        if (!ok) {
+          const reply = m.pin == null ? 'bpinreq' : 'bpinbad';
+          try { p.dc.send(JSON.stringify({ t: reply, batchId: m.batchId })); } catch {}
+          return;
+        }
+        if (knownBatch(m.batchId)) return;
+        const meta = { batchId: m.batchId, root: m.root, count: m.count, totalSize: m.totalSize,
+                       ts: m.ts || Date.now(), fromId: m.fromId || id, from: m.from || p.name,
+                       kind: m.fromKind || p.ua };
+        pushMsg({ conv: id, type: 'folder', ...meta });
+        // 直推这条路没有用户手势,只能收进 ZIP。超过 ZIP 兜底上限就不自动收,降级成一张
+        // 待接收卡让用户点——点击才是手势,那时才弹得出目录选择器、才能真还原目录树。
+        if (meta.totalSize > ZIP_MAX_TOTAL) {
+          try { p.dc.send(JSON.stringify({ t: 'bhold', batchId: m.batchId })); } catch {}
+          if (currentConv === id) renderFolderOffer(meta, id); else bumpUnread(id);
+          return;
+        }
+        const card = currentConv === id ? folderCard(meta, 'offer') : null;
+        if (card) card.downloading(null); else bumpUnread(id);
+        newRecvBatch(meta, makeZipSink(safeName(meta.root)), card, id, id, p);
+        try { p.dc.send(JSON.stringify({ t: 'bacc', batchId: m.batchId })); } catch {}
+      } else if (m.t === 'bacc') {          // 对方接受了我的文件夹 → 开始推
+        const b = myBatches.get(m.batchId); if (!b) return;
+        streamBatchTo({ id, name: p.name, ua: p.ua }, b, b.card);
+      } else if (m.t === 'bpinreq') {
+        const b = myBatches.get(m.batchId); if (!b) return;
+        askPin(p.name).then(pin => {
+          if (!pin) { b.card.unavailable(); return; }
+          pinCache.set(p.fp, pin); sendBfreq(p, m.batchId, pin);
+        });
+      } else if (m.t === 'bpinbad') {
+        const b = myBatches.get(m.batchId); if (!b) return;
+        pinCache.delete(p.fp); b.card.unavailable(); sysLine(t('pin_wrong', { name: p.name }));
+      } else if (m.t === 'bhold') {         // 对方要手动确认(文件夹太大,他得先选保存位置)
+        const b = myBatches.get(m.batchId); if (b) b.card.waiting();
+      } else if (m.t === 'bpull') {         // 有人要拉我的文件夹 → 整批直推给他
+        if (m.mid && !markSeen(m.mid)) return;
+        if (m.toId !== myId) { if (m.mid) broadcastFrame(m, id); return; }
+        const b = myBatches.get(m.batchId); if (!b) return;
+        b.card.addDownloader(m.fromId);
+        // 群通告卡是"已被 N 人下载"的回执样式,不显示单个接收方的进度;私聊卡才跟进度
+        streamBatchTo({ id: m.fromId, name: m.from, ua: m.fromKind }, b, b.group ? null : b.card);
+      } else if (m.t === 'bslow') { p.paused = true;      // 对方落盘跟不上,歇一会儿
+      } else if (m.t === 'bgo') { p.paused = false;
+      } else if (m.t === 'fmeta' && m.batchId) {          // 批内子文件头(批内不发 fend,收满即完成)
+        const st = recvBatches.get(m.batchId);
+        if (!st) return;                    // 没在收这批(已取消/已失败)
+        p.binc = m.batchId; p.incoming = null;   // 二进制块的归属只能有一个:清掉可能残留的单文件接收
+        // 通告里的 count 是对端说的,不能当数;按真正收到的个数卡上限
+        if (st.done + st.skipped >= MAX_BATCH_FILES) { failRecvBatch(st); return; }
+        armStall(st);
+        chainStep(st, async () => {
+          if (st.cur) { await st.cur.w.close(); st.cur = null; st.skipped++; }  // 上一个没收满就被顶掉
+          const segs = safeSegs(m.path);                  // 路径来自对端,当敌意输入清洗
+          if (!segs.length) segs.push('file_' + (st.done + 1));
+          const w = await st.sink.file(segs, m.lastModified);
+          st.cur = { w, size: m.size || 0, got: 0 };
+          if (!st.cur.size) { await w.close(); st.cur = null; st.done++; paintRecv(st); }
+        });
+      } else if (m.t === 'bend') {
+        const st = recvBatches.get(m.batchId);
+        if (!st) return;
+        chainStep(st, async () => {
+          if (st.cur) { await st.cur.w.close(); st.cur = null; }
+          const res = await st.sink.finish();
+          clearTimeout(st.stall);
+          recvBatches.delete(m.batchId);
+          doneBatches.set(m.batchId, res);
+          if (p.binc === m.batchId) p.binc = null;
+          const auto = res.kind === 'zip' ? autoSave(res.blob, res.name, m.batchId) : false;
+          if (st.card) st.card.saved(res, auto); else bumpUnread(st.conv);
+          if (m.skipped) sysLine(t('folder_partial', { n: m.skipped }));
+        });
       } else if (m.t === 'fmeta') {         // 开始收文件:群=先前点了下载(有 offer 卡);私聊=直推(自动建卡)
         const rec = offerCards.get(m.fileId);
         if (rec && rec.timer) { clearTimeout(rec.timer); rec.timer = null; }
@@ -936,6 +1244,7 @@ function setupDC(p, dc, id) {
           else bumpUnread(conv);
         }
         p.incoming = { fileId: m.fileId, meta: m, chunks: [], got: 0, card, conv, t0: Date.now() };
+        p.binc = null;                      // 同上:单文件接管这条通道的二进制块
       } else if (m.t === 'fend' && p.incoming && p.incoming.fileId === m.fileId) {
         const inc = p.incoming; p.incoming = null;
         const blob = new Blob(inc.chunks, { type: inc.meta.mime || 'application/octet-stream' });
@@ -943,7 +1252,27 @@ function setupDC(p, dc, id) {
         if (inc.card) inc.card.saved(blob, true);   // 首次到达→自动落盘(桌面/安卓)
         else { autoSave(blob, inc.meta.name, inc.fileId); bumpUnread(inc.conv); }   // 没在看该会话也照样自动存
       }
-    } else if (p.incoming) {               // 文件二进制块
+    } else if (p.binc) {                   // 文件夹批的字节流:排进串行 chain 边收边落盘
+      const st = recvBatches.get(p.binc);
+      if (!st) { p.binc = null; return; }
+      const data = ev.data, n = data.byteLength;
+      // ZIP 兜底路径全靠内存(Blob 存储),而 totalSize 只是对端的一面之词——真正的闸门必须
+      // 卡在收到的字节上,否则声明 0 字节再推 10GB 就能把这个标签页撑爆。
+      if (st.sink.kind === 'zip' && st.got + n > ZIP_MAX_TOTAL) { failRecvBatch(st); return; }
+      st.pending += n;                     // 已收下但还没写完的量,流控看的就是它
+      armStall(st);
+      flowCheck(st);
+      chainStep(st, async () => {
+        st.pending -= n;
+        if (st.cur) {
+          await st.cur.w.write(new Uint8Array(data));
+          st.cur.got += n; st.got += n;
+          if (st.cur.got >= st.cur.size) { await st.cur.w.close(); st.cur = null; st.done++; }
+          paintRecv(st);
+        }
+        flowCheck(st);
+      });
+    } else if (p.incoming) {               // 单文件二进制块
       p.incoming.chunks.push(ev.data);
       p.incoming.got += ev.data.byteLength;
       const inc = p.incoming;
@@ -958,22 +1287,75 @@ async function pump(p) {
   const job = p.queue.shift();
   if (!job) return;
   p.sending = true;
-  const t0 = Date.now(), size = job.file.size;
-  try {
-    p.dc.send(JSON.stringify({ t: 'fmeta', fileId: job.fileId, name: job.file.name,
-                               size, mime: job.file.type }));
-    let off = 0;
-    while (off < size) {
-      if (p.dc.bufferedAmount > HIGH_WATER) { await new Promise(ok => { p.dc.onbufferedamountlow = ok; }); continue; }
-      const buf = await job.file.slice(off, off + CHUNK).arrayBuffer();
-      p.dc.send(buf); off += buf.byteLength;
-      if (job.card && job.card.sendProgress) job.card.sendProgress(off, size, off / ((Date.now() - t0) / 1000 || 1));
-    }
-    p.dc.send(JSON.stringify({ t: 'fend', fileId: job.fileId }));
-    if (job.card && job.card.sent) job.card.sent();     // 私聊直推:发完显"已发送"
-  } catch (e) { /* 传输失败:接收方会超时,发送方静默 */ }
+  try { await (job.batch ? pumpBatch(p, job) : pumpFile(p, job)); }
+  catch (e) { /* 传输失败:接收方会超时,发送方静默 */ }
   p.sending = false;
   pump(p);
+}
+async function pumpFile(p, job) {
+  const t0 = Date.now(), size = job.file.size;
+  p.dc.send(JSON.stringify({ t: 'fmeta', fileId: job.fileId, name: job.file.name,
+                             size, mime: job.file.type }));
+  let off = 0;
+  while (off < size) {
+    if (p.dc.bufferedAmount > HIGH_WATER) { await new Promise(ok => { p.dc.onbufferedamountlow = ok; }); continue; }
+    const buf = await job.file.slice(off, off + CHUNK).arrayBuffer();
+    p.dc.send(buf); off += buf.byteLength;
+    if (job.card && job.card.sendProgress) job.card.sendProgress(off, size, off / ((Date.now() - t0) / 1000 || 1));
+  }
+  p.dc.send(JSON.stringify({ t: 'fend', fileId: job.fileId }));
+  if (job.card && job.card.sent) job.card.sent();     // 私聊直推:发完显"已发送"
+}
+// 整批推送:逐个文件 fmeta + 字节流,批内不发 fend(接收端按 size 收满即切下一个),末尾一个 bend。
+// 单个文件读失败(传输期间被删/改,File 句柄失效)就跳过它继续,数量随 bend 报给对方——
+// 静默截断比少传一个文件更糟,对方必须知道这批不完整。
+async function pumpBatch(p, job) {
+  const b = job.batch, total = b.meta.totalSize, t0 = Date.now();
+  let doneBytes = 0, doneFiles = 0, skipped = 0;
+  const card = job.card;
+  const alive = () => p.dc && p.dc.readyState === 'open';
+  for (const it of b.items) {
+    if (!alive()) throw new Error('channel gone');
+    await waitResume(p);
+    try {
+      p.dc.send(JSON.stringify({ t: 'fmeta', batchId: job.batchId, fileId: it.fileId,
+        path: it.path, size: it.file.size, mime: it.file.type, lastModified: it.file.lastModified }));
+      let off = 0;
+      while (off < it.file.size) {
+        if (!alive()) throw new Error('channel gone');
+        if (p.dc.bufferedAmount > HIGH_WATER) { await new Promise(ok => { p.dc.onbufferedamountlow = ok; }); continue; }
+        if (p.paused) { await waitResume(p); continue; }
+        const buf = await it.file.slice(off, off + CHUNK).arrayBuffer();
+        p.dc.send(buf); off += buf.byteLength; doneBytes += buf.byteLength;
+        if (card) card.sendProgress(doneBytes, doneFiles, doneBytes / ((Date.now() - t0) / 1000 || 1));
+      }
+      doneFiles++;
+    } catch (e) {
+      if (!alive()) throw e;                 // 通道断了:整批失败,交给上层
+      skipped++;                             // 只是这个文件读不出来:跳过,继续下一个
+    }
+  }
+  p.dc.send(JSON.stringify({ t: 'bend', batchId: job.batchId, skipped }));
+  if (card) { card.sendProgress(total, doneFiles, 0); card.sent(); }
+  if (skipped) sysLine(t('folder_partial_sent', { n: skipped }));
+}
+// 等对方的 bgo。30s 兜底解除:对方若掉线没发 bgo,不能让这条队列永久卡死
+function waitResume(p) {
+  if (!p.paused) return Promise.resolve();
+  return new Promise(res => {
+    const t0 = Date.now();
+    const iv = setInterval(() => {
+      if (!p.paused || !p.dc || p.dc.readyState !== 'open' || Date.now() - t0 > 30000) {
+        p.paused = false; clearInterval(iv); res();
+      }
+    }, 120);
+  });
+}
+async function streamBatchTo(info, b, selfCard) {
+  let p = peers.get(info.id);
+  if (!p || !p.dc || p.dc.readyState !== 'open') { ensurePeer(info); p = await waitDcOpen(info.id, 12000); }
+  if (!p) { if (selfCard) selfCard.unavailable(); return; }
+  p.queue.push({ batch: b, batchId: b.meta.batchId, card: selfCard }); pump(p);
 }
 // 按需建连并等 DataChannel open(拉取时对方可能还没直连上)
 function ensurePeer(info) { if (!peers.has(info.id) && ws && ws.readyState === 1) addPeer(info, true); }
@@ -1059,8 +1441,106 @@ window.addEventListener('dragleave', e => { if (hasFiles(e) && --dragDepth <= 0)
 window.addEventListener('drop', e => {
   if (!hasFiles(e)) return;
   e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging');
-  [...e.dataTransfer.files].forEach(sendFile);
+  // dataTransfer.items 在事件回调返回后即失效,必须同步把 entry 全部取出来(entry 本身之后仍可用)。
+  // 之前只读 .files:拖进来的文件夹在那里是个 size≈0 的假 File,会发出一个坏文件。
+  const entries = [...(e.dataTransfer.items || [])]
+    .map(it => it.webkitGetAsEntry ? it.webkitGetAsEntry() : null).filter(Boolean);
+  if (!entries.length) { [...e.dataTransfer.files].forEach(sendFile); return; }   // 太老的浏览器:只能按文件处理
+  entries.filter(en => en.isFile).forEach(en => en.file(f => sendFile(f), () => {}));
+  entries.filter(en => en.isDirectory).forEach(sendFolderFromEntry);              // 每个文件夹各成一批
 });
+
+/* ── 文件夹发送入口 ──
+ * 两条枚举路径:选择器(webkitdirectory → webkitRelativePath)与拖拽(FileSystemEntry 递归)。
+ * iOS 两条都不可用(webkitdirectory 在 Safari 上无效),入口直接隐藏,不给点了没反应的按钮。 */
+const dirInput = $('dir');
+{
+  const btn = $('attach-dir');
+  if (btn) { if (canPickDir) btn.onclick = () => dirInput.click(); else btn.style.display = 'none'; }
+}
+dirInput.onchange = () => {
+  const files = [...dirInput.files];
+  dirInput.value = '';
+  if (!files.length) return;
+  const rootRaw = (files[0].webkitRelativePath || files[0].name).split('/')[0];
+  sendFolder(files.map(f => ({ file: f, path: f.webkitRelativePath || f.name })), rootRaw);
+};
+// readEntries 单次最多返回 100 条,必须反复调用直到拿到空数组——FileSystem API 的经典坑,
+// 只调一次会让超过 100 个条目的文件夹被静默截断。
+function readAllEntries(reader) {
+  return new Promise((res, rej) => {
+    const all = [];
+    const step = () => reader.readEntries(batch => {
+      if (!batch.length) return res(all);
+      all.push(...batch); step();
+    }, rej);
+    step();
+  });
+}
+// 收到上限+1 就停:多出来的那一个是给 sendFolder 的信号,让它明确拒绝并告知用户。
+// 停在正好 MAX 会变成静默截断——用户以为整个文件夹发出去了,其实少了一截。
+async function walkEntry(entry, prefix, out) {
+  if (out.length > MAX_BATCH_FILES) return;
+  if (entry.isFile) {
+    const file = await new Promise((res, rej) => entry.file(res, rej));
+    out.push({ file, path: prefix + entry.name });
+  } else if (entry.isDirectory) {
+    for (const k of await readAllEntries(entry.createReader())) {
+      if (out.length > MAX_BATCH_FILES) return;
+      await walkEntry(k, prefix + entry.name + '/', out);
+    }
+  }
+}
+async function sendFolderFromEntry(dirEntry) {
+  const out = [];
+  sysLine(t('reading_folder'));
+  try { await walkEntry(dirEntry, '', out); }
+  catch (e) { sysLine(t('folder_read_fail')); return; }
+  sendFolder(out, dirEntry.name);           // 传原始根名,剥离与消毒都在 sendFolder 里做
+}
+
+// 组批并通告/直推。群聊=贴一条文件夹通告(谁点谁拉);私聊=先请求接收,对方允了再推。
+// rootRaw = 未消毒的原始根目录名:既用来消毒出 root,也用来把它从每条 path 前面剥掉——
+// 根名只在通告里传一次,子文件的 path 是相对根的。否则接收端会得到 相册/相册/… 这样的双层,
+// 而且目录模式下的同名改名(相册 (2))也会被 path 里那份硬编码的根名架空。
+async function sendFolder(items, rootRaw) {
+  if (!items.length) { sysLine(t('folder_empty')); return; }
+  if (items.length > MAX_BATCH_FILES) { sysLine(t('folder_too_many', { n: MAX_BATCH_FILES })); return; }
+  const conv = currentConv;                 // 捕获当前会话,与 sendFile 的不变量一致
+  const ts = Date.now();
+  const root = safeName(rootRaw);
+  const strip = rootRaw + '/';
+  const batchId = 'b' + Math.random().toString(36).slice(2, 10);
+  let totalSize = 0;
+  const list2 = items.map((it, i) => {
+    totalSize += it.file.size;
+    const rel = it.path.startsWith(strip) ? it.path.slice(strip.length) : it.path;
+    return { fileId: batchId + '_' + i, path: rel || it.file.name, file: it.file };
+  });
+  const meta = { batchId, root, count: list2.length, totalSize, ts,
+                 fromId: myId, from: myName, kind: myKind };
+  const card = folderCard(meta, 'self');
+  pushMsg({ conv, type: 'folder', me: 1, ...meta });
+  const wire = { batchId, root, count: list2.length, totalSize, ts,
+                 fromId: myId, from: myName, fromKind: myKind };
+  if (conv === 'all') {
+    card.selfReceipt();
+    const mid = newMid(); markSeen(mid);
+    myBatches.set(batchId, { items: list2, card, meta, group: true, mid, wire });
+    broadcastFrame({ t: 'boffer', mid, ...wire }, null);
+  } else {
+    const p = peers.get(conv);
+    myBatches.set(batchId, { items: list2, card, meta, group: false, conv, wire });
+    if (p && p.dc && p.dc.readyState === 'open') { card.sending(); sendBfreq(p, batchId); }
+    else { card.unavailable(); sysLine(t('no_direct', { name: p ? p.name : '' })); }
+  }
+}
+function sendBfreq(p, batchId, pin) {
+  const info = myBatches.get(batchId);
+  if (!info || !p.dc || p.dc.readyState !== 'open') return;
+  p.dc.send(JSON.stringify({ t: 'bfreq', ...info.wire, fp: myFp,
+    pin: pin != null ? pin : (pinCache.get(p.fp) || undefined) }));
+}
 
 /* ── 文件 ── */
 // myFiles 是"在线目录"(catalog):我这台还在提供的文件。群聊文件带 group+mid,供新设备可达时补发
@@ -1070,6 +1550,16 @@ const recvBlobs = new Map();   // fileId -> Blob  已收下的文件(仅内存,�
 // 这个文件我是否已知(历史/已渲染通告/已收下)——跨 reload、跨到达路径的按-fileId 幂等
 function knownFile(fileId) {
   return offerCards.has(fileId) || recvBlobs.has(fileId) || msgs.some(x => x.type === 'file' && x.fileId === fileId);
+}
+// 文件夹版的同一套三件套。幂等键是 batchId 而非 fileId:一批里的子文件不单独建卡、
+// 不单独进历史,重复判定必须在批这一层做,否则补发的通告会画出第二张文件夹卡。
+const myBatches = new Map();    // batchId -> {items, card, meta, group, mid, conv, wire}
+const batchCards = new Map();   // batchId -> {card, meta, timer}  我收到的文件夹通告
+const recvBatches = new Map();  // batchId -> 正在接收的状态机
+const doneBatches = new Map();  // batchId -> {kind, name, blob?}  已收完的结果(仅内存,关页即丢)
+function knownBatch(batchId) {
+  return batchCards.has(batchId) || recvBatches.has(batchId) || doneBatches.has(batchId)
+      || msgs.some(x => x.type === 'folder' && x.batchId === batchId);
 }
 
 // 群聊=贴通告(状态化,谁可达谁补收),文件留本机等人来拉;私聊=直推给对方那台(发了就到,不用点下载)
@@ -1107,6 +1597,8 @@ function advertiseCatalogTo(p) {
   if (!p || !p.dc || p.dc.readyState !== 'open') return;
   for (const info of myFiles.values())
     if (info.group) p.dc.send(JSON.stringify({ t: 'offer', mid: info.mid, ...info.meta }));
+  for (const b of myBatches.values())
+    if (b.group) p.dc.send(JSON.stringify({ t: 'boffer', mid: b.mid, ...b.wire }));
 }
 // 生成 ~360px JPEG 缩略图(几十 KB,可随通告 gossip);原图不动、仍按需拉
 function makeThumb(file) {
@@ -1122,6 +1614,111 @@ function makeThumb(file) {
     };
     im.onerror = rej; im.src = url;
   });
+}
+
+/* ── 文件夹接收 ────────────────────────────────────────────────────────────
+ * 字节到达是同步事件,而落盘(File System Access)是异步的:所有写入排进一条 chain 串行执行,
+ * 顺序由 chain 保证。落盘慢于网络时 pending 会涨,靠 bslow/bgo 两帧让发送端歇一歇——
+ * 不做这个流控的话,积压就全堆在内存里,"边收边落盘"等于白做。 */
+function newRecvBatch(meta, sink, card, conv, peerId, p) {
+  const st = { meta, sink, card, conv, peerId, p, got: 0, done: 0, skipped: 0, cur: null,
+               chain: Promise.resolve(), pending: 0, slowed: false, failed: false,
+               t0: Date.now(), stall: null };
+  recvBatches.set(meta.batchId, st);
+  armStall(st, 12000);          // 开头给 12s:发送方可能已经离线,不必等满一个 stall 周期
+  return st;
+}
+function armStall(st, ms) {
+  clearTimeout(st.stall);
+  st.stall = setTimeout(() => failRecvBatch(st), ms || STALL_MS);
+}
+// chain 里任一步抛错都终止整批:不加 failed 闸门的话,后续步骤会在半坏的 sink 上继续写
+function chainStep(st, fn) {
+  st.chain = st.chain.then(async () => {
+    if (st.failed) return;
+    try { await fn(); } catch (e) { st.failed = true; failRecvBatch(st); }
+  });
+}
+function failRecvBatch(st) {
+  if (!recvBatches.has(st.meta.batchId)) return;
+  clearTimeout(st.stall);
+  recvBatches.delete(st.meta.batchId);
+  if (st.p && st.p.binc === st.meta.batchId) st.p.binc = null;
+  if (st.card) st.card.interrupted(() => restartRecv(st.meta, st.conv, st.peerId, st.card));
+}
+function paintRecv(st) {
+  if (st.card) st.card.progress(st.got, st.done, st.got / ((Date.now() - st.t0) / 1000 || 1));
+}
+// 落盘跟不上网络:让发送端暂停,降下来再让它继续
+function flowCheck(st) {
+  const p = st.p; if (!p || !p.dc || p.dc.readyState !== 'open') return;
+  const want = st.pending > FLOW_HIGH ? true : (st.pending < FLOW_LOW ? false : st.slowed);
+  if (want === st.slowed) return;
+  st.slowed = want;
+  try { p.dc.send(JSON.stringify({ t: want ? 'bslow' : 'bgo', batchId: st.meta.batchId })); } catch {}
+}
+async function prepareSink(meta, mode) {
+  const root = safeName(meta.root);
+  if (mode !== 'dir') return makeZipSink(root);
+  try { return await makeDirSink(root); }
+  catch { return null; }        // 用户在系统目录选择器里按了取消
+}
+// 向发送方要整批。直连优先,否则 gossip 路由(和单文件 pull 同样的两级策略)
+function sendBpull(meta) {
+  const frame = { t: 'bpull', batchId: meta.batchId, toId: meta.fromId,
+                  fromId: myId, from: myName, fromKind: myKind };
+  const sp = peers.get(meta.fromId);
+  if (sp && sp.dc && sp.dc.readyState === 'open') { sp.dc.send(JSON.stringify(frame)); return true; }
+  if (targets().length) { broadcastFrame({ ...frame, mid: newMid() }, null); return true; }
+  return false;
+}
+// 待接收卡:Chromium 桌面可选"保存到文件夹"(真目录),其余只有 ZIP。点击=用户手势,
+// 目录选择器只能在这里弹——这正是私聊直推那条路只能走 ZIP 的原因。
+function renderFolderOffer(meta, conv) {
+  const card = folderCard(meta, 'offer');
+  batchCards.set(meta.batchId, { card, meta });
+  const arm = () => card.offer(async mode => {
+    card.preparing();
+    const sink = await prepareSink(meta, mode);
+    if (!sink) return arm();                        // 取消了选目录:回到待接收
+    const st = newRecvBatch(meta, sink, card, conv || 'all', meta.fromId, peers.get(meta.fromId));
+    card.downloading(null);
+    if (!sendBpull(meta)) failRecvBatch(st);
+  });
+  arm();
+  return card;
+}
+async function restartRecv(meta, conv, peerId, card) {
+  card.preparing();
+  const sink = await prepareSink(meta, canDirSave ? 'dir' : 'zip');
+  if (!sink) return card.interrupted(() => restartRecv(meta, conv, peerId, card));
+  const st = newRecvBatch(meta, sink, card, conv, peerId, peers.get(peerId));
+  card.downloading(null);
+  if (!sendBpull(meta)) failRecvBatch(st);
+}
+// 历史重画:一批可能处于"我发的/已收完/正在收/没收完"四种状态,按 batchId 判定
+function renderFolderMsg(m) {
+  const conv = m.conv || 'all';
+  if (m.me) {
+    const c = folderCard(m, 'self');
+    const b = myBatches.get(m.batchId);
+    if (b) { b.card = c; conv === 'all' ? c.selfReceipt() : c.sent(); }
+    else c.expired(() => resendFolder(m));          // 刷新后 File 对象已丢,只能重选
+    return;
+  }
+  const done = doneBatches.get(m.batchId);
+  if (done) return folderCard(m, 'offer').saved(done, autoSavedIds.has(m.batchId));
+  const live = recvBatches.get(m.batchId);
+  if (live) {                                       // 正在收:把新卡挂回状态机,进度接着画
+    const c = folderCard(m, 'offer');
+    live.card = c; c.downloading(null); c.progress(live.got, live.done, 0, true);
+    return;
+  }
+  renderFolderOffer(m, conv);
+}
+function resendFolder(m) {
+  switchConv(m.conv || 'all');
+  if (canPickDir) dirInput.click(); else sysLine(t('folder_send_unavailable'));
 }
 
 // 渲染"待下载"卡 + 绑下载动作

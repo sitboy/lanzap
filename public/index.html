@@ -212,7 +212,7 @@
           padding:0 18px; height:36px; font-size:15px; font-weight:500; cursor:pointer; }
   #send.show { display:block; }
   #plus.hidden { display:none; }
-  #file { display:none; }
+  #file, #dir { display:none; }
   #foot-note { text-align:center; font-size:10.5px; color:var(--ink-3); padding:3px 0 6px;
                background:var(--panel); flex:none; }
 
@@ -452,6 +452,9 @@
 <footer>
   <div id="tools">
     <button id="attach" title="">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12m0 0l-4-4m4 4l4-4M5 19h14"/></svg>
+    </button>
+    <button id="attach-dir" title="">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
     </button>
     <button id="clear-hist" title="">
@@ -465,6 +468,7 @@
     <button id="send" data-i18n="send"></button>
   </div>
   <input type="file" id="file" multiple>
+  <input type="file" id="dir" webkitdirectory directory multiple>
 </footer>
 <div id="foot-note" data-i18n="direct"></div>
 </div>
@@ -530,6 +534,7 @@
 </div></div>
 <script src="i18n.js"></script>
 <script src="qrcode.min.js"></script>
+<script src="zip.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

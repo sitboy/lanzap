@@ -39,6 +39,7 @@ Français ·
 
 - 🚀 **Pas d'appli, pas de connexion, pas d'ajout de contacts** — il suffit d'ouvrir l'URL dans un navigateur
 - 🔒 **Les fichiers ne passent jamais par le serveur** — P2P direct, aucune limite de taille, aucune recompression ; le serveur ne conserve ni données ni journaux
+- 📁 **Des dossiers entiers, structure intacte** — glissez-le ou sélectionnez-le ; sur Chromium de bureau il est réécrit tel quel sur le disque, les autres navigateurs reçoivent un ZIP
 - 👥 **Discussions de groupe et privées** — un salon « Tout le monde » plus un fil privé avec chaque appareil
 - 📷 **Trois façons de s'appairer** — découverte automatique sur le même réseau / scan de QR code dans la page / code de salon à 5 caractères / lien partageable
 - 🌍 **18 langues**, changées à la volée ; 🌗 le **mode sombre** suit le système
@@ -83,9 +84,13 @@ server {
 
 Connexion directe pure en LAN (aucun STUN/TURN, de quelque nature que ce soit), donc les transferts fonctionnent **uniquement au sein du même réseau**. Ouvrir le lien depuis des réseaux différents place quand même tout le monde dans le même salon et chacun peut voir les autres, mais ils ne peuvent pas se connecter directement — l'interface l'indique clairement après ~10 s au lieu de tourner indéfiniment.
 
+Tous les navigateurs savent **recevoir** un dossier, mais **en envoyer un** demande un sélecteur de dossier : Safari sur iOS n’en a pas, l’entrée y est donc masquée. La limite est de 2000 fichiers par dossier ; au-delà, un message vous invite à le compresser vous-même plutôt que d’en perdre une partie en silence.
+
 ## Fonctionnement
 
 La signalisation se trouve dans `server.js` (`ws` ; regroupe les appareils par IP de sortie / préfixe IPv6‑64, un code de salon manuel prend le dessus) ainsi que le front-end dans `public/` (maillage WebRTC, découpage en blocs de 64 Ko avec contre-pression ; le scan de QR privilégie `BarcodeDetector` et se replie sur jsQR). Le système de design se trouve dans `design/`.
+
+Le dossier n’est **pas** empaqueté avant l’envoi : il circule comme un lot de fichiers ordinaires, chacun portant son chemin relatif à la racine, si bien que la progression par fichier, le contrôle de flux et la reconnexion continuent de fonctionner tels quels. Seule la dernière étape — l’écriture sur disque — se ramifie selon la plateforme : File System Access écrit l’arborescence directement (en flux, sans rien garder en mémoire), le reste est replié dans un ZIP non compressé par `public/zip.js` (~130 lignes, sans dépendance). Les chemins reçus sont traités comme des entrées hostiles et assainis : rien ne peut sortir du dossier cible ; et si le disque est plus lent que le réseau, le receveur freine l’émetteur au lieu d’empiler le retard en mémoire.
 
 ## Licence
 

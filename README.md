@@ -39,6 +39,7 @@ English ·
 
 - 🚀 **No app, no login, no adding contacts** — just open the URL in a browser
 - 🔒 **Files never touch the server** — direct P2P, no size limit, no re‑compression; the server keeps zero data and zero logs
+- 📁 **Whole folders, structure intact** — drag one in or pick it; on desktop Chromium it is written straight back to disk as a real folder tree, other browsers get a ZIP
 - 👥 **Group + private chats** — one “Everyone” room plus a private thread with each device
 - 📷 **Three ways to pair** — automatic same‑network discovery / in‑page QR scan / 5‑char room code / shareable link
 - 🌍 **18 languages**, switched in place; 🌗 **dark mode** follows the system
@@ -86,12 +87,25 @@ same network**. Opening the link across networks still puts everyone in the same
 can see each other, but they cannot connect directly — the UI says so clearly after ~10 s
 instead of spinning forever.
 
+Folders can be **received** on every browser, but **sending** one needs a folder picker:
+iOS Safari has none, so that entry is hidden there. A folder is capped at 2000 files — over
+that you are told to zip it yourself rather than having part of it silently dropped.
+
 ## How it works
 
 Signaling in `server.js` (`ws`; groups devices by egress IP / IPv6‑64 prefix, a manual room
 code overrides this) plus the front end in `public/` (WebRTC mesh, 64 KB chunking with
 back‑pressure; QR scanning prefers `BarcodeDetector` and falls back to jsQR). The design
 system lives in `design/`.
+
+A folder is **not** packed up before sending: it travels as a batch of ordinary files, each
+carrying its path relative to the folder root, so per‑file progress, back‑pressure and
+reconnect all keep working unchanged. Only the last step — landing on disk — branches by
+platform: File System Access writes the tree directly (streaming, nothing buffered in memory),
+everything else is folded into an uncompressed ZIP by `public/zip.js` (~130 lines, no
+dependency). Incoming paths are treated as hostile input and sanitised, so nothing can escape
+the target directory; when the disk is slower than the network the receiver throttles the
+sender instead of piling the backlog up in RAM.
 
 ## License
 
