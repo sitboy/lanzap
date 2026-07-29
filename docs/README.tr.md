@@ -82,7 +82,7 @@ server {
 
 ## Kapsam
 
-Saf LAN doğrudan bağlantısı (hiçbir türde STUN/TURN yok), bu yüzden aktarımlar **yalnızca aynı ağ içinde** çalışır. Bağlantıyı farklı ağlar arasında açmak yine herkesi aynı odaya koyar ve birbirlerini görebilirler, ama doğrudan bağlanamazlar — arayüz bunu sonsuza dek döndürmek yerine ~10 saniye sonra açıkça belirtir.
+İki kademe: aynı ağdaki otomatik keşif yalnızca STUN alır (dosyalar sunucudan hiç geçmez); QR kodla açıkça eşleştirme ise son çare olarak bir TURN aktarma sunucusu ekler ve arayüzde **Aktarma ile** olarak belirtilir.
 
 Klasör **almayı** her tarayıcı yapabilir, ama **göndermek** için bir klasör seçici gerekir: iOS Safari’de yok, bu yüzden orada bu giriş gizlenir. Klasör başına sınır 2000 dosyadır; aşarsanız bir kısmı sessizce düşürülmek yerine kendiniz sıkıştırmanız açıkça söylenir.
 

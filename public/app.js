@@ -443,6 +443,11 @@ function sysLine(text) {
   const d = document.createElement('div'); d.className = 'sys'; d.textContent = text;
   list.appendChild(d); scrollBottom();
 }
+// 诊断技术摘要:比 sysLine 更小更淡,普通用户可无视,排查时截图即可定位
+function sysDetail(text) {
+  const d = document.createElement('div'); d.className = 'sys tech'; d.textContent = text;
+  list.appendChild(d); scrollBottom();
+}
 function scrollBottom() { list.scrollTop = list.scrollHeight; }
 function nearBottom() { return list.scrollHeight - list.scrollTop - list.clientHeight < 100; }
 
@@ -866,6 +871,11 @@ if (dlInvite) dlInvite.onclick = () => showInvite();
 /* ── 信令连接 ── */
 let ws, peers = new Map(); // id -> {name, ua, pc, dc, sendQueue, recving}
 let connbar;
+/* 服务器按房间类型下发的 ICE 配置(见 server.js 的 iceConfig):
+ * 本网自动房只会拿到 STUN(文件仍端到端直传);显式组队房才会附带 TURN 凭据。
+ * 拿不到就是空数组 —— 行为完全等同老版本的纯 host candidate 局域网直连。 */
+let iceServers = [];
+let relayNoticeShown = false;   // "正在通过中继"每 session 只播报一次,别刷屏
 function showConnbar(show) {
   if (!connbar) { connbar = document.createElement('div'); connbar.id = 'connbar';
     document.getElementById('main').prepend(connbar); }
@@ -893,7 +903,7 @@ function readLocalIP() {
   });
 }
 let lanTried = false;
-let stuckHintShown = false;   // "同网却连不上"诊断每 session 只提示一次,避免刷屏
+const stuckShown = new Set();  // 按诊断原因去重:同一原因只说一次,不同原因都要说到
 function maybeLanReunion() {
   if (lanTried || window.__manual || window.__lanKey || urlRoom) return;   // 已在房/已试过就不动
   lanTried = true;
@@ -922,6 +932,7 @@ function connect() {
     lastServerMsg = Date.now();                     // 任一服务器消息都刷新活性时间戳(僵尸检测用)
     const m = JSON.parse(e.data);
     if (m.type === 'peers') {
+      if (Array.isArray(m.iceServers)) iceServers = m.iceServers;   // 必须先于下面的 addPeer:建 pc 时要用
       if (m.slot != null && m.slot !== mySlot) { mySlot = m.slot; refreshSelfAvatars(); }   // 服务器分配的头像槽位
       if (m.room) { window.__room = m.room; window.__manual = !!m.manual; updateRoomState(); }
       // 按服务器权威名单对账:重连(息屏/切后台归来)后,残留的死连接要拆了重建,活的留着
@@ -948,6 +959,9 @@ function connect() {
                if (currentConv === m.id) switchConv('all'); else renderPeers(); }
     } else if (m.type === 'peer-renamed') {
       const p = peers.get(m.id); if (p) { p.name = m.name; if (m.hue != null) p.hue = m.hue; renderPeers(); }
+    } else if (m.type === 'ice-refresh') {
+      // TURN 凭据有有效期,服务器到点补发。已连上的不动,只让之后新建的 pc 用新凭据
+      if (Array.isArray(m.iceServers)) iceServers = m.iceServers;
     } else if (m.type === 'signal') {
       handleSignal(m.from, m.data);
     }
@@ -1027,7 +1041,7 @@ function renderPeers() {
       row.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false, id, peerHue(id), p.slot)}
         <div class="dot${on ? ' on' : ''}"></div>${badgeHtml(id)}</div>
         <div class="di"><div class="dn">${starPrefix(p.fp)}${esc(p.name)}</div>
-        <div class="ds${on ? ' on' : ''}">${t(on ? 'st_on' : 'st_mid')}</div></div>`;
+        <div class="ds${on ? ' on' : ''}">${t(on ? viaKey(p.via) : 'st_mid')}</div></div>`;
       row.onclick = () => switchConv(id);
       dl.appendChild(row);
     }
@@ -1038,9 +1052,59 @@ function renderPeers() {
   updateTitle();
 }
 function visiblePeerCount() { let n = 0; for (const [, p] of peers) if (!p.stuck) n++; return n; }
+// 设备行状态文案:同网直连说"已连接"就够,跨网/中继要如实说明白
+const viaKey = via => via === 'relay' ? 'st_relay' : via === 'srflx' ? 'st_p2p' : 'st_on';
 // 花名册顺序:信任的设备置顶(其余保持加入顺序)
 function sortedPeers() { return [...peers].sort((a, b) => (isTrusted(b[1].fp) ? 1 : 0) - (isTrusted(a[1].fp) ? 1 : 0)); }
 const starPrefix = fp => isTrusted(fp) ? '<span class="star-in">★</span> ' : '';
+
+/* ── 连接方式判定 ─────────────────────────────────────────────────
+ * 三种走法差别很大,用户有权知道自己现在是哪种:
+ *   host  本机网卡地址直连 —— 同一局域网,最快,文件不出这个网
+ *   srflx NAT 穿透直连     —— 跨网,但文件仍是设备到设备,不经过服务器
+ *   relay 服务器中继       —— 文件字节要过我们的服务器,必须明示,绝不偷偷走
+ * mdns 是 host 的一种:浏览器把私网 IP 换成 xxx.local 藏起来了,对端解析不到
+ * 组播就等于没有这个候选 —— 这正是"同一个 WiFi 却连不上"最常见的原因。 */
+function countCand(acc, c) {
+  const s = c.candidate || '';
+  const type = (/ typ (\w+)/.exec(s) || [])[1];
+  if (type === 'host') { acc.host++; if (/\.local/.test(s)) acc.mdns++; }
+  else if (type === 'srflx' || type === 'prflx') acc.srflx++;
+  else if (type === 'relay') acc.relay++;
+}
+/* 连不上时给出"能动手做点什么"的具体原因,而不是笼统一句"不同网络"。
+ * 判据是本机为这条连接实际收集到的候选构成——这是唯一能在浏览器里拿到的硬证据。 */
+const hasTurn = () => iceServers.some(s => /(^|,)turn:/.test(String(s.urls)));
+function diagnose(p) {
+  const c = p.cand || { host: 0, srflx: 0, relay: 0, mdns: 0 };
+  if (hasTurn() && !c.relay) return 'diag_no_relay';      // 组队房拿到了 TURN,却连中继候选都收集不到
+  if (hasTurn()) return 'diag_relay_failed';              // 中继都用上了还失败
+  if (c.host && c.host === c.mdns) return 'diag_mdns';    // host 候选全被浏览器藏成 .local
+  return 'diag_isolated';                                 // 有真实本机地址却握不上手 = 二层被挡
+}
+// 给用户看的技术摘要:一行说清本机候选构成,截图就能定位,免得来回猜
+function candSummary(p) {
+  const c = p.cand || { host: 0, srflx: 0, relay: 0, mdns: 0 };
+  const room = window.__manual && window.__room ? `room ${window.__room}` : 'lan';
+  return `${room} · host ${c.host}${c.mdns ? `(mdns ${c.mdns})` : ''} · srflx ${c.srflx} · relay ${c.relay}`;
+}
+// 读实际选中的候选对,得出这条连接真正走的是哪条路
+async function connVia(pc) {
+  try {
+    const stats = await pc.getStats();
+    let pair = null;
+    stats.forEach(r => {
+      if (r.type !== 'candidate-pair' || r.state !== 'succeeded') return;
+      if (r.nominated || !pair) pair = r;
+    });
+    if (!pair) return null;
+    const l = stats.get(pair.localCandidateId), r = stats.get(pair.remoteCandidateId);
+    const lt = l && l.candidateType, rt = r && r.candidateType;
+    if (lt === 'relay' || rt === 'relay') return 'relay';   // 任一端走中继,这条连接就是中继
+    if (lt === 'host' && rt === 'host') return 'host';
+    return 'srflx';
+  } catch { return null; }
+}
 
 /* ── WebRTC mesh ── */
 function addPeer(info, initiator) {
@@ -1050,17 +1114,31 @@ function addPeer(info, initiator) {
   peers.set(info.id, p);
   // 10 秒连不上:此设备是服务器牵的线(=同出口/同网络),却打洞失败→几乎必是二层被挡
   // (AP 隔离/访客网络/mDNS)。隐去僵尸条,但给一次可操作诊断,别让用户对着转圈发懵
+  // 中继握手要绕经服务器多跑一圈,10s 对它太紧 —— 实测会先误报"连不上"再连上,
+  // 用户白受一次惊。有 TURN 可用时把判死时间放宽一倍。
   p.stuckTimer = setTimeout(() => {
     if (!p.dc || p.dc.readyState !== 'open') {
       p.stuck = true;
-      if (!stuckHintShown) { stuckHintShown = true; sysLine(t('stuck_hint')); }
+      // 同一原因只说一次(否则 N 台连不上就刷 N 屏),但不同原因都值得说
+      const key = diagnose(p);
+      if (!stuckShown.has(key)) {
+        stuckShown.add(key);
+        sysLine(t(key));
+        sysDetail(candSummary(p));   // 技术摘要:用户截图给我就能定位,不用来回猜
+      }
       if (currentConv === info.id) switchConv('all'); else renderPeers();
     }
-  }, 10000);
-  const pc = new RTCPeerConnection({ iceServers: [] }); // 纯局域网:host candidates 足够,不依赖外部 STUN
+  }, hasTurn() ? 20000 : 10000);
+  // 同网直连时 host candidate 优先级天然最高,加了 STUN/TURN 也不会绕远路;
+  // 它们只在 host 走不通时才有机会被选中。空数组=服务器没配 = 退回纯局域网行为。
+  const pc = new RTCPeerConnection({ iceServers });
   p.pc = pc;
-  pc.onicecandidate = ev => ev.candidate &&
+  p.cand = { host: 0, srflx: 0, relay: 0, mdns: 0 };   // 本机候选构成,诊断用
+  pc.onicecandidate = ev => {
+    if (!ev.candidate) return;
+    countCand(p.cand, ev.candidate);
     ws.send(JSON.stringify({ type: 'signal', to: info.id, data: { ice: ev.candidate } }));
+  };
   pc.onconnectionstatechange = () => {
     if (['failed', 'closed'].includes(pc.connectionState)) { p.dc = null; renderPeers(); }
   };
@@ -1096,7 +1174,14 @@ function setupDC(p, dc, id) {
   dc.binaryType = 'arraybuffer';
   dc.bufferedAmountLowThreshold = 1024 * 1024;
   dc.onopen = () => { p.stuck = false; clearTimeout(p.stuckTimer); renderPeers(); pump(p);
-    advertiseCatalogTo(p); };   // 这台刚可达:把本机还在提供的群通告补发给它(晚到/刷新都能补收)
+    advertiseCatalogTo(p);      // 这台刚可达:把本机还在提供的群通告补发给它(晚到/刷新都能补收)
+    connVia(p.pc).then(via => {
+      if (!via) return;
+      p.via = via; renderPeers();
+      // 中继=文件字节要过服务器,这是本产品唯一的例外路径,必须让用户看见
+      if (via === 'relay' && !relayNoticeShown) { relayNoticeShown = true; sysLine(t('relay_notice')); }
+    });
+  };
   dc.onclose = () => { p.dc = null; renderPeers(); };
   dc.onmessage = ev => {
     if (typeof ev.data === 'string') {

@@ -82,7 +82,7 @@ server {
 
 ## Umfang
 
-Reine LAN-Direktverbindung (kein STUN/TURN jeglicher Art), daher funktionieren Übertragungen **nur innerhalb desselben Netzwerks**. Öffnet man den Link aus unterschiedlichen Netzwerken, landen trotzdem alle im selben Raum und sehen sich gegenseitig, können sich aber nicht direkt verbinden — die Oberfläche weist nach ~10 s klar darauf hin, statt endlos zu laden.
+Zwei Stufen: Die automatische Erkennung im selben Netzwerk bekommt nur STUN (Dateien gehen nie über den Server), während explizites Koppeln per QR-Code zusätzlich ein TURN-Relay als letzte Möglichkeit erhält — in der Oberfläche als **Über Relay** gekennzeichnet.
 
 **Empfangen** können Ordner alle Browser, zum **Senden** braucht es aber einen Ordner-Dialog: iOS-Safari hat keinen, dort ist der Einstieg deshalb ausgeblendet. Pro Ordner sind 2000 Dateien das Limit — darüber wirst du gebeten, ihn selbst zu packen, statt dass stillschweigend ein Teil wegfällt.
 

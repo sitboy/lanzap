@@ -82,7 +82,7 @@ server {
 
 ## Phạm vi
 
-Kết nối trực tiếp LAN thuần túy (không dùng bất kỳ STUN/TURN nào), nên việc truyền file chỉ hoạt
+Hai mức: việc tự động phát hiện trong cùng mạng chỉ nhận STUN (tệp không bao giờ đi qua máy chủ), còn khi ghép nối tường minh bằng mã QR thì có thêm máy chủ trung chuyển TURN làm phương án cuối, được ghi rõ trên giao diện là **Qua trung chuyển**.
 động **trong cùng một mạng**. Nếu mở liên kết từ mạng khác, mọi người vẫn vào chung một phòng và
 có thể thấy nhau, nhưng không thể kết nối trực tiếp — giao diện sẽ thông báo rõ điều này sau
 khoảng 10 giây thay vì quay vòng vô tận.

@@ -82,7 +82,7 @@ server {
 
 ## Périmètre
 
-Connexion directe pure en LAN (aucun STUN/TURN, de quelque nature que ce soit), donc les transferts fonctionnent **uniquement au sein du même réseau**. Ouvrir le lien depuis des réseaux différents place quand même tout le monde dans le même salon et chacun peut voir les autres, mais ils ne peuvent pas se connecter directement — l'interface l'indique clairement après ~10 s au lieu de tourner indéfiniment.
+Deux niveaux : la découverte automatique sur le même réseau ne reçoit que du STUN (les fichiers ne transitent jamais par le serveur), tandis que l'association explicite par QR code ajoute un relais TURN en dernier recours, signalé dans l'interface par **Par relais**.
 
 Tous les navigateurs savent **recevoir** un dossier, mais **en envoyer un** demande un sélecteur de dossier : Safari sur iOS n’en a pas, l’entrée y est donc masquée. La limite est de 2000 fichiers par dossier ; au-delà, un message vous invite à le compresser vous-même plutôt que d’en perdre une partie en silence.
 

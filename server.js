@@ -3,6 +3,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 
 const PORT = process.env.PORT || 8879;
@@ -51,6 +52,36 @@ function roomCode(key) {
   return h.toString(36).slice(-4).toUpperCase();
 }
 
+/* ── ICE 配置下发 ──────────────────────────────────────────────────
+ * 这里是本项目唯一一处"文件可能经过服务器"的开关,红线就落在这几行:
+ *
+ *   自动发现的本网大房间  → 只给 STUN。STUN 只回一句"你的公网 IP:端口",
+ *                          几十字节,文件依旧端到端直传,永不经过服务器。
+ *   显式扫码/输码组队房    → 额外下发 TURN 凭据。用户主动组队 = 明确表达了
+ *                          "我就要连这两台",此时才允许中继兜底,且客户端会
+ *                          在界面上明示"正在通过中继传输",不偷偷走。
+ *
+ * 未配 TURN_HOST 时行为完全退回老样子(纯 host candidate),开源部署者不配
+ * 就是零依赖的纯局域网版本。
+ */
+const TURN_HOST = process.env.TURN_HOST || '';        // 例:file.joestudy.net
+const TURN_SECRET = process.env.TURN_SECRET || '';    // 与 coturn static-auth-secret 一致
+const TURN_TTL = 2 * 3600;                            // 凭据有效期 2 小时
+
+function iceConfig(manual) {
+  if (!TURN_HOST) return [];
+  const stun = { urls: [`stun:${TURN_HOST}:3478`] };
+  if (!manual || !TURN_SECRET) return [stun];
+  // coturn 的时间限凭据(use-auth-secret):username 自带过期时间戳,
+  // password 现算。客户端永远拿不到长期密码,抓包泄漏也只在有效期内有意义。
+  const username = `${Math.floor(Date.now() / 1000) + TURN_TTL}:zap`;
+  const credential = crypto.createHmac('sha1', TURN_SECRET).update(username).digest('base64');
+  return [stun, {
+    urls: [`turn:${TURN_HOST}:3478?transport=udp`, `turn:${TURN_HOST}:3478?transport=tcp`],
+    username, credential,
+  }];
+}
+
 const wss = new WebSocketServer({ server, maxPayload: MAX_MSG });
 wss.on('connection', (ws, req) => {
   const autoKey = roomKey(req);
@@ -96,8 +127,10 @@ wss.on('connection', (ws, req) => {
       // 诊断(按需):看每台设备真实呈现的出口/房间键,定位"同网却分家"的真因。LANZAP_DEBUG=1 才开
       if (process.env.LANZAP_DEBUG)
         console.log(`[room] ${new Date().toISOString()} ip=${clientIp(req)} key=${key} room#=${room.size} ua=${ws._ua} name=${ws._name}`);
+      ws._manual = manual;   // 定期刷新凭据时要知道这条连接该不该给 TURN
       ws.send(JSON.stringify({ type: 'peers', you: peerId, slot: ws._slot,
         room: manual ? m.room : roomCode(key), manual,
+        iceServers: iceConfig(manual),
         peers: peersInfo().filter(p => p.id !== peerId) }));
       broadcast({ type: 'peer-joined', peer: { id: peerId, name: ws._name, ua: ws._ua, hue: ws._hue, slot: ws._slot, fp: ws._fp } }, peerId);
     } else if (m.type === 'rename' && peerId) {
@@ -130,5 +163,14 @@ setInterval(() => {
       s.once('pong', () => { s._dead = false; });
     }
 }, 30000);
+
+// TURN 凭据 2 小时过期。页面挂一天不动的情况真实存在(桌面标签页),
+// 到期后新建的连接会认证失败且无从察觉,所以留够余量主动补发。
+if (TURN_HOST) setInterval(() => {
+  for (const room of rooms.values())
+    for (const s of room.values())
+      if (s.readyState === 1)
+        s.send(JSON.stringify({ type: 'ice-refresh', iceServers: iceConfig(s._manual) }));
+}, 100 * 60 * 1000);
 
 server.listen(PORT, () => console.log(`lan-transfer signaling on :${PORT}`));

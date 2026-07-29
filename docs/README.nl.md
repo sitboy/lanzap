@@ -82,7 +82,7 @@ server {
 
 ## Reikwijdte
 
-Pure LAN-directverbinding (geen STUN/TURN van welke aard dan ook), dus overdrachten werken
+Twee niveaus: automatische ontdekking op hetzelfde netwerk krijgt alleen STUN (bestanden gaan nooit via de server), terwijl expliciet koppelen via QR-code een TURN-relay als laatste redmiddel toevoegt, in de interface aangeduid als **Via relay**.
 **alleen binnen hetzelfde netwerk**. Als je de link tussen netwerken opent, komt iedereen nog
 steeds in dezelfde ruimte en kunnen ze elkaar zien, maar ze kunnen niet direct verbinden — de UI
 meldt dit duidelijk na ~10 s in plaats van eindeloos te blijven laden.

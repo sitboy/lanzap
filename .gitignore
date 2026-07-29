@@ -1,3 +1,6 @@
 node_modules/
 .DS_Store
 data/
+# 生产启动配置里有 TURN_SECRET,而本仓库是公开的 —— 绝不能进 git
+ecosystem.config.js
+.env

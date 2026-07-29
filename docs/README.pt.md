@@ -82,7 +82,7 @@ server {
 
 ## Escopo
 
-Conexão direta pura por LAN (sem STUN/TURN de nenhum tipo), então as transferências funcionam **somente dentro da mesma rede**. Abrir o link entre redes diferentes ainda coloca todos na mesma sala e eles conseguem se ver, mas não conseguem se conectar diretamente — a interface avisa isso claramente depois de ~10 s em vez de ficar girando para sempre.
+Dois níveis: a descoberta automática na mesma rede recebe apenas STUN (os arquivos nunca passam pelo servidor), enquanto o pareamento explícito por código QR acrescenta um relay TURN como último recurso, indicado na interface como **Por retransmissão**.
 
 Todos os navegadores conseguem **receber** pastas, mas **enviar** exige um seletor de pastas: o Safari do iOS não tem, então lá essa entrada fica oculta. O limite é de 2000 arquivos por pasta; acima disso você é avisado para compactá-la, em vez de perder parte dela silenciosamente.
 

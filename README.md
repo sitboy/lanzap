@@ -6,7 +6,9 @@
 
 An AirDrop you don't install — a transfer helper without the login.
 Devices on the same network open one URL and land in the same chat; text and files
-go **peer‑to‑peer and never touch the server**.
+go **peer‑to‑peer and never touch the server**. Pairing by QR code additionally lets
+devices on *different* networks connect, falling back to a relay only when a direct
+link is impossible — and the UI says so when that happens.
 
 [**Live demo →**](https://file.joestudy.net)
 
@@ -38,7 +40,8 @@ English ·
 ## Features
 
 - 🚀 **No app, no login, no adding contacts** — just open the URL in a browser
-- 🔒 **Files never touch the server** — direct P2P, no size limit, no re‑compression; the server keeps zero data and zero logs
+- 🔒 **On your own network, files never touch the server** — direct P2P, no size limit, no re‑compression; the server keeps zero data and zero logs. Automatic same‑network discovery is *never* given a relay, so this holds by construction, not by promise
+- 🌐 **Paired across networks, with a relay as the last resort** — scanning a QR code is you saying “connect these two”, so that room also gets a TURN relay. A direct path is always preferred; if only the relay works, the device is labelled **Via relay** in the UI. Even then the bytes stay end‑to‑end encrypted (DTLS) — the relay forwards them but cannot read them
 - 📁 **Whole folders, structure intact** — drag one in or pick it; on desktop Chromium it is written straight back to disk as a real folder tree, other browsers get a ZIP
 - 👥 **Group + private chats** — one “Everyone” room plus a private thread with each device
 - 📷 **Three ways to pair** — automatic same‑network discovery / in‑page QR scan / 5‑char room code / shareable link
@@ -82,10 +85,24 @@ server {
 
 ## Scope
 
-Pure LAN direct connection (no STUN/TURN of any kind), so transfers work **only within the
-same network**. Opening the link across networks still puts everyone in the same room and they
-can see each other, but they cannot connect directly — the UI says so clearly after ~10 s
-instead of spinning forever.
+Two tiers, and which one you get depends on how the devices found each other:
+
+| How you connected | ICE servers handed out | Where the bytes go |
+| --- | --- | --- |
+| Automatic same‑network discovery | STUN only | Always device‑to‑device |
+| Paired explicitly (QR / room code / link) | STUN **+ TURN** | Direct if at all possible; relay only as the last resort, and labelled as such |
+
+The split is deliberate: the default path can never relay, so “files don't touch the server”
+is a property of the code rather than a promise. Asking for a relay takes a deliberate act —
+scanning a code — and when one is in use the UI says **Via relay** instead of hiding it.
+
+Self‑hosting: leave `TURN_HOST` unset and the server hands out no ICE servers at all,
+which is exactly the old pure‑LAN behaviour. Set `TURN_HOST` + `TURN_SECRET` (matching your
+coturn `static-auth-secret`) to enable the cross‑network tier.
+
+When a connection still can't be made, the UI names the actual reason after ~10 s (20 s when a
+relay is in play, since relayed handshakes take longer) — mDNS blocked by the network, AP/client
+isolation, relay unreachable — rather than spinning forever or blaming "different networks".
 
 Folders can be **received** on every browser, but **sending** one needs a folder picker:
 iOS Safari has none, so that entry is hidden there. A folder is capped at 2000 files — over

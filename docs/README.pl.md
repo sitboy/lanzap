@@ -82,7 +82,7 @@ server {
 
 ## Zakres
 
-Czyste bezpośrednie połączenie w sieci lokalnej (bez jakiegokolwiek STUN/TURN), więc przesyłanie działa **tylko w obrębie tej samej sieci**. Otwarcie linku między różnymi sieciami nadal umieszcza wszystkich w tym samym pokoju i widzą się nawzajem, ale nie mogą połączyć się bezpośrednio — interfejs mówi o tym wyraźnie po ~10 s, zamiast kręcić się w nieskończoność.
+Dwa poziomy: automatyczne wykrywanie w tej samej sieci dostaje tylko STUN (pliki nigdy nie przechodzą przez serwer), natomiast jawne sparowanie kodem QR dodaje przekaźnik TURN jako ostateczność, oznaczany w interfejsie jako **Przez przekaźnik**.
 
 Foldery **odbierze** każda przeglądarka, ale do **wysłania** potrzebny jest systemowy wybór folderu: Safari na iOS go nie ma, więc tam to wejście jest ukryte. Limit to 2000 plików na folder — powyżej dostaniesz wyraźną prośbę o samodzielne spakowanie, zamiast po cichu stracić część zawartości.
 

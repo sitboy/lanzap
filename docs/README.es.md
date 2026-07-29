@@ -82,7 +82,7 @@ server {
 
 ## Alcance
 
-Conexión directa pura por LAN (sin STUN/TURN de ningún tipo), así que las transferencias funcionan **solo dentro de la misma red**. Abrir el enlace desde redes distintas igual coloca a todos en la misma sala y pueden verse entre sí, pero no pueden conectarse directamente — la interfaz lo indica claramente tras ~10 s en lugar de quedarse girando indefinidamente.
+Dos niveles: el descubrimiento automático en la misma red solo recibe STUN (los archivos nunca pasan por el servidor), mientras que emparejar explícitamente por código QR añade un relay TURN como último recurso, indicado en la interfaz como **Por retransmisión**.
 
 Todas las navegadores pueden **recibir** carpetas, pero **enviarlas** requiere un selector de carpetas: Safari de iOS no lo tiene, así que allí esa entrada está oculta. El límite es de 2000 archivos por carpeta; si lo superas se te avisa para que la comprimas tú, en lugar de descartar una parte en silencio.
 

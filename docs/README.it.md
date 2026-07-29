@@ -82,7 +82,7 @@ server {
 
 ## Ambito
 
-Connessione diretta puramente LAN (nessun STUN/TURN di alcun tipo), quindi i trasferimenti funzionano
+Due livelli: il rilevamento automatico sulla stessa rete riceve solo STUN (i file non passano mai dal server), mentre l'associazione esplicita tramite QR code aggiunge un relay TURN come ultima risorsa, indicato nell'interfaccia come **Tramite relay**.
 **solo all'interno della stessa rete**. Aprire il link tra reti diverse mette comunque tutti nella
 stessa stanza e possono vedersi a vicenda, ma non possono connettersi direttamente — l'interfaccia
 lo comunica chiaramente dopo circa 10 s invece di girare all'infinito.

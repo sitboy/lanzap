@@ -82,7 +82,7 @@ server {
 
 ## Cakupan
 
-Koneksi langsung LAN murni (tanpa STUN/TURN dalam bentuk apa pun), sehingga transfer hanya berfungsi
+Dua tingkat: penemuan otomatis di jaringan yang sama hanya mendapat STUN (berkas tidak pernah melewati server), sedangkan pemasangan eksplisit lewat kode QR menambahkan relai TURN sebagai upaya terakhir, ditandai di antarmuka sebagai **Lewat relai**.
 **dalam jaringan yang sama**. Membuka tautan lintas jaringan tetap akan menempatkan semua orang di
 ruang yang sama dan mereka bisa saling melihat, tetapi tidak bisa terhubung langsung — UI akan
 menampilkan pesan yang jelas setelah ~10 detik alih-alih berputar tanpa henti.
