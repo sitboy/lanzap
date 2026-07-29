@@ -1083,6 +1083,22 @@ function candSummary(p) {
   const room = window.__manual && window.__room ? `room ${window.__room}` : 'lan';
   return `${room} · host ${c.host}${c.mdns ? `(mdns ${c.mdns})` : ''} · srflx ${c.srflx} · relay ${c.relay}`;
 }
+/* 盯住这条连接的走法,直到落定。
+ * 不能只查一次:ICE 选路要一会才定,而且 getStats 里 candidate-pair 的 succeeded 状态
+ * 会**瞬时消失**(实测有整秒查不到 nominated pair 的窗口)。查一次就放弃的话,恰好撞上
+ * 那个窗口的连接会一直显示成"直连"、中继也不播报 —— 而"走中继必须明示"是这个功能的前提。
+ * 落定后继续复查几轮,顺带捕捉 ICE 的路径升级(先走中继、打通后升级成直连)。 */
+function trackVia(p, n = 0) {
+  if (!p.pc || !p.dc || p.dc.readyState !== 'open') return;
+  connVia(p.pc).then(via => {
+    if (via && via !== p.via) {
+      p.via = via; renderPeers();
+      // 中继=文件字节要过服务器,这是本产品唯一的例外路径,必须让用户看见
+      if (via === 'relay' && !relayNoticeShown) { relayNoticeShown = true; sysLine(t('relay_notice')); }
+    }
+    if (n < 8) setTimeout(() => trackVia(p, n + 1), via ? 3000 : 400);
+  });
+}
 // 读实际选中的候选对,得出这条连接真正走的是哪条路
 async function connVia(pc) {
   try {
@@ -1170,12 +1186,7 @@ function setupDC(p, dc, id) {
   dc.bufferedAmountLowThreshold = 1024 * 1024;
   dc.onopen = () => { p.stuck = false; clearTimeout(p.stuckTimer); renderPeers(); pump(p);
     advertiseCatalogTo(p);      // 这台刚可达:把本机还在提供的群通告补发给它(晚到/刷新都能补收)
-    connVia(p.pc).then(via => {
-      if (!via) return;
-      p.via = via; renderPeers();
-      // 中继=文件字节要过服务器,这是本产品唯一的例外路径,必须让用户看见
-      if (via === 'relay' && !relayNoticeShown) { relayNoticeShown = true; sysLine(t('relay_notice')); }
-    });
+    trackVia(p);
   };
   dc.onclose = () => { p.dc = null; renderPeers(); };
   dc.onmessage = ev => {
