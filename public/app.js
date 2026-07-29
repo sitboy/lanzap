@@ -804,7 +804,7 @@ codeInput.oninput = () => codeGo.classList.toggle('on', codeInput.value.trim().l
 codeGo.onclick = () => { const v = codeInput.value.trim(); if (v.length >= 4) enterRoom(v); };
 codeInput.onkeydown = e => { if (e.key === 'Enter') codeGo.onclick(); };
 
-/* 站内扫码:BarcodeDetector 原生优先,jsQR 懒加载兜底(iOS 等) */
+/* 站内扫码:jsQR 懒加载软解,唯一路径(为什么不用 BarcodeDetector 见 startScan 内注释) */
 const scanBox = document.getElementById('scan'), cam = document.getElementById('cam');
 let scanStream = null, scanTimer = null;
 function loadScript(src) { return new Promise((ok, no) => {
@@ -817,35 +817,30 @@ async function startScan() {
       video: { facingMode: 'environment', width: { ideal: 1280 } } });
   } catch { alert(t('camera_fail')); return; }
   cam.srcObject = scanStream;
-  try { await cam.play(); } catch {}
+  try { await cam.play(); } catch (e) { console.warn('[scan] video.play 失败:', e && e.message); }
   scanBox.classList.add('show');
-  // jsQR 软解为主力:国产安卓无 Google 服务时 BarcodeDetector 是空壳(API 在、detect 永远无结果),
-  // 不能作为依赖,只能当加速器
-  if (!window.jsQR) { try { await loadScript('jsqr.min.js'); } catch {} }
-  let bd = null;
-  if ('BarcodeDetector' in window) { try { bd = new BarcodeDetector({ formats: ['qr_code'] }); } catch {} }
+  /* 只用 jsQR 同步软解。曾经拿 BarcodeDetector 当加速器排在前面,但无 Google 服务的国产安卓上
+   * 它是**空壳**:API 在、new 得出来,detect() 返回的 Promise 却永不 resolve 也不 reject ——
+   * await 它会把整个扫描循环连同 busy 锁一起挂死,表现就是"摄像头画面正常、永远扫不出码",
+   * 连 catch 都兜不住(没有异常,只是永远悬着)。省那点 CPU 不值得赔上唯一能跑通的路径。 */
+  if (!window.jsQR) {
+    try { await loadScript('jsqr.min.js'); }
+    catch (e) { console.error('[scan] jsQR 加载失败:', e && e.message); }
+  }
+  if (!window.jsQR) { stopScan(); alert(t('scan_lib_fail')); return; }   // 没有解码器就别让用户对着摄像头空等
   const cv = document.createElement('canvas');
   const cx = cv.getContext('2d', { willReadFrequently: true });
-  let busy = false;
-  scanTimer = setInterval(async () => {
-    if (!cam.videoWidth || busy) return;
-    busy = true;
-    let text = '';
-    if (bd) { try { const r = await bd.detect(cam); if (r[0]) text = r[0].rawValue; } catch { bd = null; } }
-    if (!text && window.jsQR) {
-      // 缩到 640 宽解码:速度 x4,识别率不受影响
-      const w = 640, h = Math.round(cam.videoHeight * w / cam.videoWidth);
-      cv.width = w; cv.height = h;
-      cx.drawImage(cam, 0, 0, w, h);
-      const d = cx.getImageData(0, 0, w, h);
-      const r = jsQR(d.data, w, h, { inversionAttempts: 'dontInvert' });
-      if (r) text = r.data;
-    }
-    busy = false;
-    if (text) {
-      const m = text.match(/#r=([A-Za-z0-9]{4,8})/) || text.match(/^([A-Za-z0-9]{4,8})$/);
-      if (m) { stopScan(); enterRoom(m[1]); }   // 只认本产品的房码,别的二维码不理
-    }
+  scanTimer = setInterval(() => {
+    if (!cam.videoWidth) return;      // 回调是纯同步的,不会重入,所以不需要 busy 锁
+    // 缩到 640 宽解码:速度 x4,识别率不受影响
+    const w = 640, h = Math.round(cam.videoHeight * w / cam.videoWidth);
+    cv.width = w; cv.height = h;
+    cx.drawImage(cam, 0, 0, w, h);
+    const d = cx.getImageData(0, 0, w, h);
+    const r = jsQR(d.data, w, h, { inversionAttempts: 'dontInvert' });
+    if (!r) return;
+    const m = r.data.match(/#r=([A-Za-z0-9]{4,8})/) || r.data.match(/^([A-Za-z0-9]{4,8})$/);
+    if (m) { stopScan(); enterRoom(m[1]); }   // 只认本产品的房码,别的二维码不理
   }, 260);
 }
 function stopScan() {
