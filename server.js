@@ -15,10 +15,21 @@ const server = http.createServer((req, res) => {
   let p = req.url.split('?')[0];
   if (p === '/') p = '/index.html';
   const fp = path.join(PUB, path.normalize(p));
-  if (!fp.startsWith(PUB) || !fs.existsSync(fp) || !fs.statSync(fp).isFile()) {
-    res.writeHead(404); return res.end();
-  }
-  res.writeHead(200, { 'Content-Type': MIME[path.extname(fp)] || 'application/octet-stream' });
+  if (!fp.startsWith(PUB)) { res.writeHead(404); return res.end(); }
+  let st;
+  try { st = fs.statSync(fp); } catch { res.writeHead(404); return res.end(); }
+  if (!st.isFile()) { res.writeHead(404); return res.end(); }
+  /* 一个缓存头都不发的话,浏览器(手机上尤其激进)会拿着旧 app.js 不放,
+   * 结果是"明明部署了却没生效",只能教用户强刷 —— 踩过一次。
+   * no-cache 不等于不缓存:它让浏览器每次回来验一下 ETag,没变就是 304(几十字节),
+   * 变了才重新下载。文件按 mtime+size 派生 ETag,rsync 上去就自动失效。 */
+  const etag = `"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`;
+  if (req.headers['if-none-match'] === etag) { res.writeHead(304); return res.end(); }
+  res.writeHead(200, {
+    'Content-Type': MIME[path.extname(fp)] || 'application/octet-stream',
+    'Cache-Control': 'no-cache',
+    'ETag': etag,
+  });
   fs.createReadStream(fp).pipe(res);
 });
 
