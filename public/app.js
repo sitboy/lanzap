@@ -267,7 +267,13 @@ function renderConv() {
       else c.sent();                          // 私聊:已送达,保持"已发送"
     } else if (recvBlobs.has(m.fileId)) {      // 已收下的文件:直接显"已保存"(切走再切回不丢)
       fileCard(m, 'offer').saved(recvBlobs.get(m.fileId));
-    } else renderOffer(m);                     // 还没收的:待下载卡(群通告点了才拉;私聊直推会自动收)
+    } else if ((m.conv || 'all') === 'all') {
+      renderOffer(m);                          // 群通告:发送方还在提供,点「下载」真能拉回来
+    } else {
+      // 私聊直推没有"拉取"通道(那是群通告独有的)。整页重载(iOS 切后台常见)会丢掉内存里
+      // 还没收完的 blob,此时画一个「下载」按钮是误导——点了不会有任何反应。如实说要对方重发。
+      fileCard(m, 'offer').incomplete();
+    }
   });
   scrollBottom();
 }
@@ -535,6 +541,29 @@ function fileCard(meta, role) {
     sent() {
       const bar = act.querySelector('.prog>div'); if (bar) bar.style.width = '100%';
       sizeEl.innerHTML = `<span class="ok">✓ ${t('sent_ok')} · ${fmtSize(meta.size)}</span>`;
+      act.innerHTML = '';
+    },
+    // 字节都推完了,但还没等到对方回执 —— 这段时间不能宣布成功
+    awaitingAck() {
+      const bar = act.querySelector('.prog>div'); if (bar) bar.style.width = '100%';
+      act.innerHTML = `<div class="prog"><div style="width:100%"></div></div>
+        <div class="fc-row"><span class="fc-pct">${t('awaiting_ack')}</span></div>`;
+    },
+    // 推完了但回执始终没来:数据可能已经到了,也可能没到 —— 如实说"未确认",不猜
+    sentUnconfirmed() {
+      sizeEl.innerHTML = `<span class="fc-hint">${t('sent_unconfirmed')} · ${fmtSize(meta.size)}</span>`;
+      act.innerHTML = '';
+    },
+    // 通道中断:明确告诉用户没发成,别让进度条停在半路当哑谜
+    sendFailed() {
+      row.querySelector('.bubble.file') && row.querySelector('.bubble.file').classList.add('dim');
+      sizeEl.innerHTML = `<span class="fc-off">${t('send_failed_card')} · ${fmtSize(meta.size)}</span>`;
+      act.innerHTML = '';
+    },
+    // 私聊直推没收完就丢了(整页重载/切后台被系统回收):直推无拉取通道,只能等对方重发
+    incomplete() {
+      const b = row.querySelector('.bubble.file'); if (b) b.classList.add('dim');
+      sizeEl.innerHTML = `<span class="fc-off">${t('recv_incomplete')} · ${fmtSize(meta.size)}</span>`;
       act.innerHTML = '';
     },
     // 发送方离线:置灰+不可获取
@@ -1337,6 +1366,8 @@ function setupDC(p, dc, id) {
           const auto = res.kind === 'zip' ? autoSave(res.blob, res.name, m.batchId) : false;
           if (st.card) st.card.saved(res, auto); else bumpUnread(st.conv);
           if (m.skipped) sysLine(t('folder_partial', { n: m.skipped }));
+          // 落盘完成才回执:发送方凭这个才敢说"已送达"
+          try { p.dc.send(JSON.stringify({ t: 'fack', fileId: m.batchId })); } catch {}
         });
       } else if (m.t === 'fmeta') {         // 开始收文件:群=先前点了下载(有 offer 卡);私聊=直推(自动建卡)
         const rec = offerCards.get(m.fileId);
@@ -1357,8 +1388,13 @@ function setupDC(p, dc, id) {
         const inc = p.incoming; p.incoming = null;
         const blob = new Blob(inc.chunks, { type: inc.meta.mime || 'application/octet-stream' });
         recvBlobs.set(inc.fileId, blob);    // 暂存内存:切走再切回/未在看时都能看到"已保存"
+        // 回执必须先发:字节已经完整收到了,这就是"送达"。放在落盘/渲染之后的话,
+        // 那两步一旦抛异常,发送方就永远等不到回执、卡在"等待确认"。
+        try { p.dc.send(JSON.stringify({ t: 'fack', fileId: inc.fileId })); } catch {}
         if (inc.card) inc.card.saved(blob, true);   // 首次到达→自动落盘(桌面/安卓)
         else { autoSave(blob, inc.meta.name, inc.fileId); bumpUnread(inc.conv); }   // 没在看该会话也照样自动存
+      } else if (m.t === 'fack') {
+        settleAck(m.fileId);                // 对方确认收全了,这才是真送达
       }
     } else if (p.binc) {                   // 文件夹批的字节流:排进串行 chain 边收边落盘
       const st = recvBatches.get(p.binc);
@@ -1390,29 +1426,95 @@ function setupDC(p, dc, id) {
 }
 
 /* 发送队列:每 peer 串行(文件流,尊重背压)。文件按 fileId 打标,支持并发拉取串行化 */
+/* 等接收方的 fack 回执 —— 收到才算真送达。
+ * 不用死超时干等:通道一断,回执就永远不可能来了,此刻直接判"中断"最准也最快。
+ * 只有"通道还活着但回执迟迟不来"才说"未确认" —— 那时数据可能真到了只是回执丢了,
+ * 不谎报成功,也不冤枉成失败。 */
+const pendingAcks = new Map();   // fileId -> {card, iv}
+const ACK_GRACE = 20000;
+function awaitAck(fileId, card, p) {
+  const t0 = Date.now();
+  const iv = setInterval(() => {
+    if (p && (!p.dc || p.dc.readyState !== 'open')) {   // 通道没了:回执不会来了
+      clearInterval(iv); pendingAcks.delete(fileId);
+      if (card.sendFailed) card.sendFailed();
+      sysLine(t('send_failed', { name: (p && p.name) || '' }));
+      return;
+    }
+    if (Date.now() - t0 > ACK_GRACE) {                  // 通道还在,只是回执没来
+      clearInterval(iv); pendingAcks.delete(fileId);
+      if (card.sentUnconfirmed) card.sentUnconfirmed();
+    }
+  }, 500);
+  pendingAcks.set(fileId, { card, iv });
+}
+function settleAck(fileId) {
+  const w = pendingAcks.get(fileId);
+  if (!w) return;
+  pendingAcks.delete(fileId); clearInterval(w.iv);
+  if (w.card.sent) w.card.sent();
+}
+// 传输已经判失败了,把等待撤掉 —— 否则稍后又冒出个"未确认",盖掉"发送中断"的结论
+function cancelAck(fileId) {
+  const w = pendingAcks.get(fileId);
+  if (w) { pendingAcks.delete(fileId); clearInterval(w.iv); }
+}
+
 async function pump(p) {
   if (p.sending || !p.dc || p.dc.readyState !== 'open') return;
   const job = p.queue.shift();
   if (!job) return;
   p.sending = true;
   try { await (job.batch ? pumpBatch(p, job) : pumpFile(p, job)); }
-  catch (e) { /* 传输失败:接收方会超时,发送方静默 */ }
+  catch (e) {
+    // 不再静默:发送方必须知道这次没成。否则界面停在某个百分比,或更糟——显示"已发送"
+    console.warn('[send] 传输中断:', e && e.message);
+    cancelAck(job.fileId || job.batchId);
+    if (job.card && job.card.sendFailed) job.card.sendFailed();
+    sysLine(t('send_failed', { name: p.name || '' }));
+  }
   p.sending = false;
   pump(p);
 }
+/* 背压等待。通道一断就再也不会有 bufferedamountlow 事件 —— 不设兜底的话这个 Promise
+ * 永久悬着,传输就卡在某个百分比不动了(实测"卡在 86%"即此)。同 BarcodeDetector 那个坑:
+ * 永不 resolve 的 await 比抛异常危险,因为 catch 兜不住。 */
+function waitDrainBelow(p, limit, alive) {
+  if (!(p.dc && p.dc.bufferedAmount > limit)) return Promise.resolve();
+  return new Promise(ok => {
+    let done = false;
+    const fin = () => { if (done) return; done = true; clearInterval(iv); p.dc.onbufferedamountlow = null; ok(); };
+    p.dc.onbufferedamountlow = fin;
+    const iv = setInterval(() => { if (!alive() || p.dc.bufferedAmount <= limit) fin(); }, 250);
+    setTimeout(fin, 30000);                 // 连 low 事件也不来、又没断:兜底放行,让上层的 alive 检查去判死
+  });
+}
+
 async function pumpFile(p, job) {
   const t0 = Date.now(), size = job.file.size;
+  const alive = () => p.dc && p.dc.readyState === 'open';
+  if (!alive()) throw new Error('channel gone');
   p.dc.send(JSON.stringify({ t: 'fmeta', fileId: job.fileId, name: job.file.name,
                              size, mime: job.file.type }));
   let off = 0;
   while (off < size) {
-    if (p.dc.bufferedAmount > HIGH_WATER) { await new Promise(ok => { p.dc.onbufferedamountlow = ok; }); continue; }
+    if (!alive()) throw new Error('channel gone');   // 隔壁 pumpBatch 一直有这道守卫,这里漏了
+    if (p.dc.bufferedAmount > HIGH_WATER) { await waitDrainBelow(p, HIGH_WATER, alive); continue; }
     const buf = await job.file.slice(off, off + CHUNK).arrayBuffer();
+    if (!alive()) throw new Error('channel gone');    // 读盘是异步的,读完可能已经断了
     p.dc.send(buf); off += buf.byteLength;
     if (job.card && job.card.sendProgress) job.card.sendProgress(off, size, off / ((Date.now() - t0) / 1000 || 1));
   }
+  if (!alive()) throw new Error('channel gone');
   p.dc.send(JSON.stringify({ t: 'fend', fileId: job.fileId }));
-  if (job.card && job.card.sent) job.card.sent();     // 私聊直推:发完显"已发送"
+  /* 到这里只是"字节都进了本地发送缓冲",绝不等于对方收到了。
+   * 要等对方的 fack 回执 —— 战果按下游回执计,不按本地"我发出去了"计。
+   * (旧版本在此直接 sent(),连接一断缓冲全丢,发送方却已宣布"已发送",接收方一无所有。)
+   * 登记必须在这里、而不是等排空之后:同网络下 fack 几乎瞬间就回来,会跑在
+   * waitDrainBelow 的轮询前面 —— 登记晚一步就永远接不到那个回执。 */
+  if (job.card) { if (job.card.awaitingAck) job.card.awaitingAck(); awaitAck(job.fileId, job.card, p); }
+  await waitDrainBelow(p, 0, alive);
+  if (!alive()) throw new Error('channel gone');
 }
 // 整批推送:逐个文件 fmeta + 字节流,批内不发 fend(接收端按 size 收满即切下一个),末尾一个 bend。
 // 单个文件读失败(传输期间被删/改,File 句柄失效)就跳过它继续,数量随 bend 报给对方——
@@ -1431,7 +1533,7 @@ async function pumpBatch(p, job) {
       let off = 0;
       while (off < it.file.size) {
         if (!alive()) throw new Error('channel gone');
-        if (p.dc.bufferedAmount > HIGH_WATER) { await new Promise(ok => { p.dc.onbufferedamountlow = ok; }); continue; }
+        if (p.dc.bufferedAmount > HIGH_WATER) { await waitDrainBelow(p, HIGH_WATER, alive); continue; }
         if (p.paused) { await waitResume(p); continue; }
         const buf = await it.file.slice(off, off + CHUNK).arrayBuffer();
         p.dc.send(buf); off += buf.byteLength; doneBytes += buf.byteLength;
@@ -1443,8 +1545,12 @@ async function pumpBatch(p, job) {
       skipped++;                             // 只是这个文件读不出来:跳过,继续下一个
     }
   }
+  if (!alive()) throw new Error('channel gone');
   p.dc.send(JSON.stringify({ t: 'bend', batchId: job.batchId, skipped }));
-  if (card) { card.sendProgress(total, doneFiles, 0); card.sent(); }
+  // 和单文件同样的道理:字节进了本地缓冲不等于对方收到,要等回执;登记同样必须先于排空等待
+  if (card) { card.sendProgress(total, doneFiles, 0); if (card.awaitingAck) card.awaitingAck(); awaitAck(job.batchId, card, p); }
+  await waitDrainBelow(p, 0, alive);
+  if (!alive()) throw new Error('channel gone');
   if (skipped) sysLine(t('folder_partial_sent', { n: skipped }));
 }
 // 等对方的 bgo。30s 兜底解除:对方若掉线没发 bgo,不能让这条队列永久卡死
