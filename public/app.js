@@ -752,7 +752,9 @@ function renderInvitePane() {
   document.getElementById('room-active').style.display = inRoom ? '' : 'none';
   if (!inRoom) return;                     // 本网:只展示"创建私密房"引导,不出码(=不建房、不离网)
   const qr = document.getElementById('qr'); qr.innerHTML = '';
-  new QRCode(qr, { text: inviteUrl(), width: 168, height: 168, correctLevel: QRCode.CorrectLevel.M });
+  // 232 而非 168:手机举远一点,168px 的码在 640 宽采样图里只剩一小块,jsQR 很吃力。
+  // 弹层内容区 264px 宽,232+12(padding) 刚好放得下。
+  new QRCode(qr, { text: inviteUrl(), width: 232, height: 232, correctLevel: QRCode.CorrectLevel.M });
   const inp = document.getElementById('room-name-input');
   if (inp && document.activeElement !== inp) inp.value = urlRoom;
 }
@@ -768,6 +770,20 @@ function renderInvitePane() {
   inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } });
   inp.addEventListener('blur', commit);
 })();
+/* 有人进来了就把二维码收起来。
+ * 出码方举着二维码等人扫,扫码方那边一成功就进房了,出码方却还对着二维码 ——
+ * 界面毫无变化,只能自己猜成没成、再手动关掉。二维码的唯一目的就是让人扫进来,
+ * 目的达成就该自动让位给"谁进来了"。
+ * 只在"出码等人扫"这个状态下收:本网房里设备自动出现是常态,那时弹层多半是用户
+ * 正在操作(输房码/看创建引导),关掉反而是打断。 */
+function closeInviteIfWaiting(name) {
+  const mask = document.getElementById('mask');
+  if (!mask || !mask.classList.contains('show')) return;
+  if (card.classList.contains('join')) return;   // 用户在"加入"面自己输码,别抢他的操作
+  if (!urlRoom) return;                          // 本网房没出码,这次加入不是扫码来的
+  mask.classList.remove('show');
+  if (name) sysLine(t('joined_via_code', { name }));
+}
 function showInvite(pane) {
   // 默认面:已在私密房→出码;否则手机默认扫码(加入方)、桌面默认出码引导
   const join = pane ? pane === 'join' : (!urlRoom && myKind === 'mobile');
@@ -841,7 +857,7 @@ async function startScan() {
     if (!r) return;
     const m = r.data.match(/#r=([A-Za-z0-9]{4,8})/) || r.data.match(/^([A-Za-z0-9]{4,8})$/);
     if (m) { stopScan(); enterRoom(m[1]); }   // 只认本产品的房码,别的二维码不理
-  }, 260);
+  }, 170);   // 170ms:一次 640 宽软解远快于此,间隔太长白等,对不准时更明显
 }
 function stopScan() {
   clearInterval(scanTimer); scanTimer = null;
@@ -947,6 +963,7 @@ function connect() {
       if (stale) { try { stale.pc && stale.pc.close(); } catch {} peers.delete(m.peer.id); }
       addPeer(m.peer, false);                       // 对方后来:等它发起
       renderPeers(); sysLine(t('peer_joined', { name: m.peer.name }));
+      closeInviteIfWaiting(m.peer.name);            // 对方扫进来了→二维码使命完成,收起弹层
     } else if (m.type === 'peer-left') {
       const p = peers.get(m.id);
       if (p) { sysLine(t('peer_left', { name: p.name })); try { p.pc && p.pc.close(); } catch {}
