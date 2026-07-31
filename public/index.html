@@ -58,6 +58,8 @@
   .peer .dot { position:absolute; right:-3px; bottom:-3px; width:11px; height:11px;
                border-radius:999px; border:2px solid var(--panel); background:var(--dot-mid); }
   .peer .dot.on { background:var(--dot-on); }
+  /* 握不上手的设备:压暗但不藏起来,点一下会说明原因和出路 */
+  .peer.stuck, .dl-row.stuck { opacity:.5; }
   .peer .dot.off { background:var(--dot-off); }
 
   /* 服务器连接状态条 */
@@ -367,6 +369,12 @@
       border-radius:10px; height:38px; color:var(--ink-2); font-size:13px; cursor:pointer;
       display:flex; align-items:center; justify-content:center; gap:6px; }
     #dl-invite:hover { color:var(--brand); border-color:var(--brand); }
+    /* 房码房专属出口:只在被房码"锁住"时出现,让"怎么回本网"永远是一眼可见的一次点击,
+       不必翻到页脚才发现自己不在局域网里 */
+    #dl-back { display:none; margin:0 12px 8px; border:none; border-radius:8px; height:28px;
+      background:var(--line); color:var(--ink-2); font-size:12px; cursor:pointer; }
+    #dl-back.show { display:block; }
+    #dl-back:hover { color:var(--brand); }
     /* 右:聊天区 */
     #main { background:var(--bg); }
     header { height:50px; }
@@ -406,7 +414,8 @@
   </button>
 </nav>
 <div id="devlist">
-  <div class="dl-head"><span data-i18n="devices_title"></span><button id="dl-plus">＋</button></div>
+  <div class="dl-head"><span id="dl-title"></span><button id="dl-plus">＋</button></div>
+  <button id="dl-back" data-i18n="back_to_local"></button>
   <div id="dl-items"></div>
   <button id="dl-invite">
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 17.5h7M17.5 14v7"/></svg>

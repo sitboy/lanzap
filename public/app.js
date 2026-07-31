@@ -24,11 +24,23 @@ function applyI18n() {
   if (ad) ad.title = t('send_folder');
   updateRoomState();
 }
+/* 当前这群设备到底是"同一个网络里的人"还是"同一个房码里的人" —— 只有这一处真相。
+ * 凡是界面上标示设备来源的地方都必须用它:组队房里写死"本网设备"会让用户
+ * 以为自己在局域网自动发现,于是把"找不到人/连不上"归咎于网络,而真正的原因是
+ * 地址栏残留 #r=CODE 把他困在了一个只有他自己的房码房里(用户实测踩过两次)。 */
+const roomLabel = () => window.__manual && window.__room
+  ? t('room') + ' ' + window.__room
+  : t('devices_title');
 // 房间状态一行:自动房=本网;手动房码房=房间 CODE。看见房码=在共享房,否则在本网络。
 function updateRoomState() {
   $('foot-note').textContent = window.__manual && window.__room
     ? t('direct') + ' · ' + t('room') + ' ' + window.__room
     : t('direct') + ' · ' + t('this_network');
+  const dt = $('dl-title');
+  if (dt) dt.textContent = roomLabel();
+  // 在房码房里必须给一眼可见的出口,否则用户只能靠翻页脚才知道怎么回本网
+  const bk = $('dl-back');
+  if (bk) bk.classList.toggle('show', !!(window.__manual && window.__room));
 }
 // 清空本机聊天记录(阅后即焚/退出销毁)
 function clearHistory() {
@@ -907,6 +919,8 @@ document.querySelector('#hero .alt a[data-act=qr]').onclick = () => showInvite('
 const dlPlus = document.getElementById('dl-plus'), dlInvite = document.getElementById('dl-invite');
 if (dlPlus) dlPlus.onclick = () => showInvite();
 if (dlInvite) dlInvite.onclick = () => showInvite();
+const dlBack = document.getElementById('dl-back');
+if (dlBack) dlBack.onclick = leaveRoom;
 
 /* ── 信令连接 ── */
 let ws, peers = new Map(); // id -> {name, ua, pc, dc, sendQueue, recving}
@@ -1028,6 +1042,22 @@ function badgeHtml(conv) {
   const n = unread[conv];
   return n ? `<div class="badge">${n > 99 ? '99+' : n}</div>` : '';
 }
+/* 连不上的设备该隐去还是如实摆出来,取决于它是谁:
+ *   本网大房间 = 服务器只是按出口 IP 猜的"同网",CGNAT/公司出口下可能是素不相识的人,
+ *                连不上就隐去,免得一屏幕都是握不上手的陌生设备。
+ *   房码组队房 = 用户自己扫码/输码拉进来的,要连的就是这几台。这里再隐藏就是把用户的
+ *                意图丢掉,还会造成"对面页面明明开着、设备却凭空消失"的困惑(实测被抱怨)。 */
+const showStuck = () => !!(window.__manual && window.__room);
+/* 连不上的设备点一下必须有交代:是谁、为什么、能怎么办。
+ * 给个点了没反应的条目,比隐藏它还糟。 */
+function explainStuck(id) {
+  const p = peers.get(id);
+  if (!p) return;
+  switchConv('all');
+  sysLine(p.name + ' — ' + t('st_stuck'));
+  sysLine(t(diagnose(p)));
+  sysDetail(candSummary(p));   // 技术摘要:截图给我就能定位
+}
 function renderPeers() {
   // 移动:横向设备条(头像=会话入口;自己头像=回群聊)
   peersBar.innerHTML = '';
@@ -1038,14 +1068,15 @@ function renderPeers() {
   selfEl.onclick = () => switchConv('all');
   peersBar.appendChild(selfEl);
   for (const [id, p] of sortedPeers()) {
-    if (p.stuck) continue;                    // 连不上的(跨网)直接隐去,只露连得上的
+    if (p.stuck && !showStuck()) continue;    // 本网房:连不上的隐去。组队房:如实摆出来
     const el = document.createElement('div');
-    el.className = 'peer' + (currentConv === id ? ' cur' : '');
-    const dotCls = p.dc && p.dc.readyState === 'open' ? ' on' : '';   // 连上=绿,连接中=无色
+    el.className = 'peer' + (currentConv === id ? ' cur' : '') + (p.stuck ? ' stuck' : '');
+    // 连上=绿,连接中=无色,连不上=灰(如实标,不假装还在连)
+    const dotCls = p.dc && p.dc.readyState === 'open' ? ' on' : (p.stuck ? ' off' : '');
     el.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false, id, peerHue(id), p.slot)}
       <div class="dot${dotCls}"></div>${badgeHtml(id)}</div>
       <div class="pn">${starPrefix(p.fp)}${esc(p.name)}</div>`;
-    el.onclick = () => switchConv(id);
+    el.onclick = p.stuck ? () => explainStuck(id) : () => switchConv(id);
     peersBar.appendChild(el);
   }
   const inv = document.createElement('div');
@@ -1066,7 +1097,7 @@ function renderPeers() {
       <path d="M6.5 30c.8-4.4 4.2-7 8-7s7.2 2.6 8 7" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
       <path d="M25 23.4c3.2.3 5.9 2.6 6.6 6.1" fill="none" stroke="#DFF6EC" stroke-width="1.8" stroke-linecap="round"/></svg>
       ${badgeHtml('all')}</div>
-      <div class="di"><div class="dn">${t('all')}</div><div class="ds">${t('devices_title')} · ${visiblePeerCount() + 1}</div></div>`;
+      <div class="di"><div class="dn">${t('all')}</div><div class="ds">${roomLabel()} · ${visiblePeerCount() + 1}</div></div>`;
     allRow.onclick = () => switchConv('all');
     dl.appendChild(allRow);
     const selfRow = document.createElement('div');
@@ -1075,15 +1106,15 @@ function renderPeers() {
       <div class="di"><div class="dn">${esc(myName)}</div><div class="ds">${t('self_tag')}</div></div>`;
     dl.appendChild(selfRow);
     for (const [id, p] of sortedPeers()) {
-      if (p.stuck) continue;                  // 连不上的隐去
+      if (p.stuck && !showStuck()) continue;  // 本网房:连不上的隐去。组队房:如实摆出来
       const on = p.dc && p.dc.readyState === 'open';
       const row = document.createElement('div');
-      row.className = 'dl-row' + (currentConv === id ? ' cur' : '');
+      row.className = 'dl-row' + (currentConv === id ? ' cur' : '') + (p.stuck ? ' stuck' : '');
       row.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false, id, peerHue(id), p.slot)}
-        <div class="dot${on ? ' on' : ''}"></div>${badgeHtml(id)}</div>
+        <div class="dot${on ? ' on' : p.stuck ? ' off' : ''}"></div>${badgeHtml(id)}</div>
         <div class="di"><div class="dn">${starPrefix(p.fp)}${esc(p.name)}</div>
-        <div class="ds${on ? ' on' : ''}">${t(on ? viaKey(p.via) : 'st_mid')}</div></div>`;
-      row.onclick = () => switchConv(id);
+        <div class="ds${on ? ' on' : p.stuck ? ' bad' : ''}">${t(on ? viaKey(p.via) : p.stuck ? 'st_stuck' : 'st_mid')}</div></div>`;
+      row.onclick = p.stuck ? () => explainStuck(id) : () => switchConv(id);
       dl.appendChild(row);
     }
   }
@@ -1092,7 +1123,8 @@ function renderPeers() {
   document.getElementById('hero').classList.toggle('show', visiblePeerCount() === 0 && currentConv === 'all');
   updateTitle();
 }
-function visiblePeerCount() { let n = 0; for (const [, p] of peers) if (!p.stuck) n++; return n; }
+// 列表上真正露面的设备数 —— 计数、空态引导、落单判断三处都以"用户看得见的"为准
+function visiblePeerCount() { let n = 0; for (const [, p] of peers) if (!p.stuck || showStuck()) n++; return n; }
 // 设备行状态文案:同网直连说"已连接"就够,跨网/中继要如实说明白
 const viaKey = via => via === 'relay' ? 'st_relay' : via === 'srflx' ? 'st_p2p' : 'st_on';
 // 花名册顺序:信任的设备置顶(其余保持加入顺序)
