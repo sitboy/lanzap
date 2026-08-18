@@ -2,7 +2,7 @@
 
 # Zap
 
-**Aynı Wi‑Fi'de aç ve gönder.**
+**Tara ve gönder. Aynı Wi‑Fi bir bonus.**
 
 Kurulum gerektirmeyen bir AirDrop — girişsiz bir aktarım yardımcısı.
 Aynı ağdaki cihazlar tek bir URL açar ve aynı sohbete düşer; metin ve dosyalar

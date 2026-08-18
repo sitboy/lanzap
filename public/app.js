@@ -98,6 +98,21 @@ const myKind = /iPhone|iPad|Android/.test(navigator.userAgent) ? 'mobile' : 'des
 // 信任设备集合(按持久指纹 fp,localStorage 持久):信任的设备私聊发文件免 PIN,且花名册置顶+加星
 let trusted = new Set(); try { trusted = new Set(JSON.parse(localStorage.trustedFps || '[]')); } catch {}
 const isTrusted = fp => !!fp && trusted.has(fp);
+const ZP = window.ZapPairs;
+const ZR = window.ZapResume;
+let pairedDevices = ZP ? ZP.loadPaired(localStorage.pairedDevices || '[]') : [];
+function savePaired() { localStorage.pairedDevices = JSON.stringify(pairedDevices); }
+function isPaired(fp) { return ZP ? ZP.isPaired(pairedDevices, fp) : false; }
+function persistPair(rec) {
+  if (!ZP || !rec || !rec.fp || !rec.tok) return;
+  pairedDevices = ZP.rememberPair(pairedDevices, rec);
+  savePaired();
+}
+function dropPair(fp) {
+  if (!ZP) return;
+  pairedDevices = ZP.forgetPair(pairedDevices, fp);
+  savePaired();
+}
 const recvPin = () => localStorage.recvPin || '';        // 我的接收码(空=关):别人私聊发我文件需先对码
 const pinCache = new Map();                               // fp -> 我为对方输过的接收码(会话内记住,免重复输)
 // 应用内 PIN 输入弹层(异步,不用阻塞式 prompt):resolve 为输入的码或 null(取消)
@@ -196,6 +211,7 @@ function openIdentity() {
   document.getElementById('id-name').value = myName;
   document.getElementById('id-pin').value = recvPin();
   document.getElementById('id-av').innerHTML = avatarSvg(myKind, true, myId, pendingHue != null ? pendingHue : slotHue(mySlot), mySlot);
+  renderPairedList();
   const sw = document.getElementById('id-swatches');
   sw.innerHTML = SWATCHES.map(h => {
     const bg = h == null ? 'linear-gradient(150deg,#12C88B,#0E9E6E)' : `hsl(${h},70%,50%)`;
@@ -354,7 +370,7 @@ function safeSegs(raw) {
   return String(raw == null ? '' : raw)
     .replace(/\\/g, '/').split('/')
     .filter(s => s && s !== '.' && s !== '..')            // 去掉 .. 和空段(绝对路径的前导 / 在此消失)
-    .map(s => s.replace(/[ -<>:"|?*]/g, '_'))   // 控制字符 + 各平台非法字符
+    .map(s => s.replace(/[\x00-\x1f\x7f<>:"|?*]/g, '_'))   // 控制字符 + 各平台非法字符
     .map(s => s.replace(/[. ]+$/, ''))                    // Windows 不允许结尾的点或空格
     .filter(Boolean)
     .map(s => WIN_RESERVED.test(s) ? '_' + s : s)         // CON / PRN / COM1… 保留名
@@ -394,7 +410,19 @@ async function makeDirSink(root) {
       const dir = await ensureDir(segs.slice(0, -1));
       const fh = await dir.getFileHandle(segs[segs.length - 1], { create: true });
       const w = await fh.createWritable();
-      return { write: c => w.write(c), close: () => w.close() };
+      return { write: c => w.write(c), close: () => w.close(), fileHandle: fh };
+    },
+    async fileAt(segs, lastModified, offset) {
+      const dir = await ensureDir(segs.slice(0, -1));
+      const fh = await dir.getFileHandle(segs[segs.length - 1], { create: true });
+      const w = await fh.createWritable({ keepExistingData: true });
+      const writer = ZR.positionalWriter(
+        (pos, u8) => w.write({ type: 'write', position: pos, data: u8 }),
+        () => w.close(),
+        offset
+      );
+      writer.fileHandle = fh;
+      return writer;
     },
     async finish() { return { kind: 'dir', name }; },
   };
@@ -572,6 +600,10 @@ function fileCard(meta, role) {
       sizeEl.innerHTML = `<span class="fc-off">${t('send_failed_card')} · ${fmtSize(meta.size)}</span>`;
       act.innerHTML = '';
     },
+    resuming() {
+      const b = row.querySelector('.bubble.file'); if (b) b.classList.remove('dim');
+      sizeEl.innerHTML = `<span class="fc-hint">${t('resuming')}</span>`;
+    },
     // 私聊直推没收完就丢了(整页重载/切后台被系统回收):直推无拉取通道,只能等对方重发
     incomplete() {
       const b = row.querySelector('.bubble.file'); if (b) b.classList.add('dim');
@@ -709,6 +741,10 @@ function folderCard(meta, role) {
       sizeEl.innerHTML = `<span class="ok">✓ ${t('sent_ok')} · ${summary()}</span>`;
       act.innerHTML = '';
     },
+    resuming() {
+      const b = row.querySelector('.bubble.file'); if (b) b.classList.remove('dim');
+      sizeEl.innerHTML = `<span class="fc-hint">${t('resuming')}</span>`;
+    },
     unavailable() {
       row.querySelector('.bubble.file').classList.add('dim');
       act.innerHTML = `<span class="fc-off">◷ ${t('sender_gone')}</span>`;
@@ -749,7 +785,20 @@ function folderCard(meta, role) {
  * 裸链接/新标签/隐私模式 一律回"本网络大房间";带 #r= 的链接才进对应共享房。
  * 好处:同一网络任何打开方式都进同一大房间,不会因存储隔离(隐私模式)莫名分家 */
 let urlRoom = (location.hash.match(/r=([A-Za-z0-9]{4,8})/) || [])[1] || '';
+let urlPairNonce = (location.hash.match(/n=([A-Za-z0-9]{6})/) || [])[1] || '';
 const card = document.getElementById('invite-card');
+
+function consumePairHash() {
+  if (!/#n=/i.test(location.hash)) return;
+  history.replaceState(null, '', location.pathname + (urlRoom ? '#r=' + urlRoom : ''));
+}
+function claimPendingNonce() {
+  if (!urlPairNonce || !ws || ws.readyState !== 1) return;
+  const n = urlPairNonce.toUpperCase();
+  urlPairNonce = '';
+  consumePairHash();
+  ws.send(JSON.stringify({ type: 'pair-claim', nonce: n }));
+}
 
 function inviteUrl() { return location.origin + '/#r=' + urlRoom; }
 
@@ -770,7 +819,7 @@ function leaveRoom() {
 }
 // 切房:清掉旧房所有 P2P 连接与消息,用新房重连 ws(无刷新)
 function reconnectRoom() {
-  for (const [, p] of peers) { try { p.pc && p.pc.close(); } catch {} }
+  for (const [, p] of peers) teardownPc(p, { keepPeer: false });
   peers.clear();
   if (ws) { ws.onclose = null; try { ws.close(); } catch {} }
   currentConv = 'all';
@@ -896,8 +945,10 @@ async function startScan() {
     const d = cx.getImageData(0, 0, w, h);
     const r = jsQR(d.data, w, h, { inversionAttempts: 'dontInvert' });
     if (!r) return;
+    const pair = r.data.match(/#n=([A-Za-z0-9]{6})/i);
+    if (pair) { stopScan(); urlPairNonce = pair[1]; claimPendingNonce(); return; }
     const m = r.data.match(/#r=([A-Za-z0-9]{4,8})/) || r.data.match(/^([A-Za-z0-9]{4,8})$/);
-    if (m) { stopScan(); enterRoom(m[1]); }   // 只认本产品的房码,别的二维码不理
+    if (m) { stopScan(); enterRoom(m[1]); }
   }, 170);   // 170ms:一次 640 宽软解远快于此,间隔太长白等,对不准时更明显
 }
 function stopScan() {
@@ -977,11 +1028,15 @@ function connect() {
   const slow = setTimeout(() => showConnbar(true), 1500);  // 1.5s 没连上才显示,避免闪烁
   ws.addEventListener('open', () => { clearTimeout(slow); showConnbar(false); lastServerMsg = Date.now(); });
   ws.addEventListener('close', () => { clearTimeout(slow); showConnbar(true); });
-  ws.onopen = () => ws.send(JSON.stringify({ type: 'hello', id: myId, name: myName, fp: myFp,
-    room: urlRoom ? urlRoom.toUpperCase() : undefined,
-    lan: window.__lanKey || undefined,     // 尽力而为:读到本地子网就带上,让代理设备同子网重聚
-    hue: myHue != null ? myHue : undefined,
-    ua: /iPhone|iPad|Android/.test(navigator.userAgent) ? 'mobile' : 'desktop' }));
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ type: 'hello', id: myId, name: myName, fp: myFp,
+      room: urlRoom ? urlRoom.toUpperCase() : undefined,
+      lan: window.__lanKey || undefined,
+      hue: myHue != null ? myHue : undefined,
+      pairs: ZP ? ZP.pairsForHello(pairedDevices) : undefined,
+      ua: /iPhone|iPad|Android/.test(navigator.userAgent) ? 'mobile' : 'desktop' }));
+    claimPendingNonce();
+  };
   ws.onmessage = async e => {
     lastServerMsg = Date.now();                     // 任一服务器消息都刷新活性时间戳(僵尸检测用)
     const m = JSON.parse(e.data);
@@ -991,11 +1046,14 @@ function connect() {
       if (m.room) { window.__room = m.room; window.__manual = !!m.manual; updateRoomState(); }
       // 按服务器权威名单对账:重连(息屏/切后台归来)后,残留的死连接要拆了重建,活的留着
       const ids = new Set(m.peers.map(x => x.id));
-      for (const [id, pr] of [...peers]) if (!ids.has(id)) { try { pr.pc && pr.pc.close(); } catch {} peers.delete(id); }
+      for (const [id, pr] of [...peers]) {
+        if (pr.edge === 'pair') continue;
+        if (!ids.has(id)) { teardownPc(pr, { keepPeer: false }); peers.delete(id); }
+      }
       for (const pinfo of m.peers) {
         const ex = peers.get(pinfo.id);
         if (ex && ex.dc && ex.dc.readyState === 'open') continue;   // 还活着,别动
-        if (ex) { try { ex.pc && ex.pc.close(); } catch {} peers.delete(pinfo.id); }  // 半死/残留→拆
+        if (ex) { teardownPc(ex, { keepPeer: false }); peers.delete(pinfo.id); }
         addPeer(pinfo, true);                        // (重)连:我向名单里每台发起
       }
       renderPeers();
@@ -1003,20 +1061,41 @@ function connect() {
     } else if (m.type === 'peer-joined') {
       // 同 id 重连(如对方刷新页面):销毁残留的旧连接再重建,否则信令会打在死 pc 上
       const stale = peers.get(m.peer.id);
-      if (stale) { try { stale.pc && stale.pc.close(); } catch {} peers.delete(m.peer.id); }
+      if (stale) { teardownPc(stale, { keepPeer: false }); peers.delete(m.peer.id); }
       addPeer(m.peer, false);                       // 对方后来:等它发起
       renderPeers(); sysLine(t('peer_joined', { name: m.peer.name }));
       closeInviteIfWaiting(m.peer.name);            // 对方扫进来了→二维码使命完成,收起弹层
     } else if (m.type === 'peer-left') {
       const p = peers.get(m.id);
-      if (p) { sysLine(t('peer_left', { name: p.name })); try { p.pc && p.pc.close(); } catch {}
-               peers.delete(m.id);
-               if (currentConv === m.id) switchConv('all'); else renderPeers(); }
+      if (p && p.edge !== 'pair') {
+        sysLine(t('peer_left', { name: p.name }));
+        teardownPc(p, { keepPeer: false });
+        peers.delete(m.id);
+        if (currentConv === m.id) switchConv('all'); else renderPeers();
+      }
     } else if (m.type === 'peer-renamed') {
       const p = peers.get(m.id); if (p) { p.name = m.name; if (m.hue != null) p.hue = m.hue; renderPeers(); }
     } else if (m.type === 'ice-refresh') {
-      // TURN 凭据有有效期,服务器到点补发。已连上的不动,只让之后新建的 pc 用新凭据
       if (Array.isArray(m.iceServers)) iceServers = m.iceServers;
+    } else if (m.type === 'pair-intro') {
+      onPairIntro(m);
+    } else if (m.type === 'pair-gone') {
+      const pr = peers.get(m.id);
+      if (pr && pr.edge === 'pair') {
+        teardownPc(pr, { keepPeer: false });
+        peers.delete(m.id);
+        if (currentConv === m.id) switchConv('all'); else renderPeers();
+      }
+    } else if (m.type === 'pair-ice') {
+      onPairIce(m);
+    } else if (m.type === 'pair-nonce') {
+      showPairNonce(m.nonce);
+    } else if (m.type === 'pair-miss') {
+      alert(t('pair_miss'));
+    } else if (m.type === 'pair-limit') {
+      alert(t('pair_limit'));
+    } else if (m.type === 'pair-deny') {
+      // roommate without tok/edge — stay stuck; no TURN minted
     } else if (m.type === 'signal') {
       handleSignal(m.from, m.data);
     }
@@ -1047,7 +1126,13 @@ function badgeHtml(conv) {
  *                连不上就隐去,免得一屏幕都是握不上手的陌生设备。
  *   房码组队房 = 用户自己扫码/输码拉进来的,要连的就是这几台。这里再隐藏就是把用户的
  *                意图丢掉,还会造成"对面页面明明开着、设备却凭空消失"的困惑(实测被抱怨)。 */
-const showStuck = () => !!(window.__manual && window.__room);
+function showStuck(p) {
+  if (window.__manual && window.__room) return true;
+  if (p && (p.edge === 'pair' || isPaired(p.fp))) return true;
+  const live = [...peers.values()].filter(x => !x.stuck).length;
+  const stuckN = [...peers.values()].filter(x => x.stuck).length;
+  return live === 0 && stuckN > 0;
+}
 /* 连不上的设备点一下必须有交代:是谁、为什么、能怎么办。
  * 给个点了没反应的条目,比隐藏它还糟。 */
 function explainStuck(id) {
@@ -1068,13 +1153,13 @@ function renderPeers() {
   selfEl.onclick = () => switchConv('all');
   peersBar.appendChild(selfEl);
   for (const [id, p] of sortedPeers()) {
-    if (p.stuck && !showStuck()) continue;    // 本网房:连不上的隐去。组队房:如实摆出来
+    if (p.stuck && !showStuck(p)) continue;
     const el = document.createElement('div');
     el.className = 'peer' + (currentConv === id ? ' cur' : '') + (p.stuck ? ' stuck' : '');
     // 连上=绿,连接中=无色,连不上=灰(如实标,不假装还在连)
     const dotCls = p.dc && p.dc.readyState === 'open' ? ' on' : (p.stuck ? ' off' : '');
-    el.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false, id, peerHue(id), p.slot)}
-      <div class="dot${dotCls}"></div>${badgeHtml(id)}</div>
+    el.innerHTML = `<div class="pa">${avatarSvg(p.ua === 'mobile' ? 'mobile' : 'desktop', false, id, p.edge === 'pair' ? hueOf(p.fp || id) : peerHue(id), p.edge === 'pair' ? null : p.slot)}
+      <div class="dot${dotCls}"></div>${p.edge === 'pair' ? '<div class="plink"></div>' : ''}${badgeHtml(id)}</div>
       <div class="pn">${starPrefix(p.fp)}${esc(p.name)}</div>`;
     el.onclick = p.stuck ? () => explainStuck(id) : () => switchConv(id);
     peersBar.appendChild(el);
@@ -1106,7 +1191,7 @@ function renderPeers() {
       <div class="di"><div class="dn">${esc(myName)}</div><div class="ds">${t('self_tag')}</div></div>`;
     dl.appendChild(selfRow);
     for (const [id, p] of sortedPeers()) {
-      if (p.stuck && !showStuck()) continue;  // 本网房:连不上的隐去。组队房:如实摆出来
+      if (p.stuck && !showStuck(p)) continue;
       const on = p.dc && p.dc.readyState === 'open';
       const row = document.createElement('div');
       row.className = 'dl-row' + (currentConv === id ? ' cur' : '') + (p.stuck ? ' stuck' : '');
@@ -1122,13 +1207,17 @@ function renderPeers() {
   // 空态引导(M1):群聊且网内没有连得上的设备时显示
   document.getElementById('hero').classList.toggle('show', visiblePeerCount() === 0 && currentConv === 'all');
   updateTitle();
+  updateSendHome();
 }
 // 列表上真正露面的设备数 —— 计数、空态引导、落单判断三处都以"用户看得见的"为准
-function visiblePeerCount() { let n = 0; for (const [, p] of peers) if (!p.stuck || showStuck()) n++; return n; }
+function visiblePeerCount() { let n = 0; for (const [, p] of peers) if (!p.stuck || showStuck(p)) n++; return n; }
 // 设备行状态文案:同网直连说"已连接"就够,跨网/中继要如实说明白
 const viaKey = via => via === 'relay' ? 'st_relay' : via === 'srflx' ? 'st_p2p' : 'st_on';
 // 花名册顺序:信任的设备置顶(其余保持加入顺序)
-function sortedPeers() { return [...peers].sort((a, b) => (isTrusted(b[1].fp) ? 1 : 0) - (isTrusted(a[1].fp) ? 1 : 0)); }
+function sortedPeers() {
+  const rank = p => (isTrusted(p.fp) ? 2 : 0) + (isPaired(p.fp) || p.edge === 'pair' ? 1 : 0);
+  return [...peers].sort((a, b) => rank(b[1]) - rank(a[1]));
+}
 const starPrefix = fp => isTrusted(fp) ? '<span class="star-in">★</span> ' : '';
 
 /* ── 连接方式判定 ─────────────────────────────────────────────────
@@ -1147,11 +1236,14 @@ function countCand(acc, c) {
 }
 /* 连不上时给出"能动手做点什么"的具体原因,而不是笼统一句"不同网络"。
  * 判据是本机为这条连接实际收集到的候选构成——这是唯一能在浏览器里拿到的硬证据。 */
-const hasTurn = () => iceServers.some(s => /(^|,)turn:/.test(String(s.urls)));
+function hasTurn(p) {
+  const ice = (p && p.iceServersUsed) || iceServers || [];
+  return ice.some(s => /(^|,)turn:/.test(String(s.urls)));
+}
 function diagnose(p) {
   const c = p.cand || { host: 0, srflx: 0, relay: 0, mdns: 0 };
-  if (hasTurn() && !c.relay) return 'diag_no_relay';      // 组队房拿到了 TURN,却连中继候选都收集不到
-  if (hasTurn()) return 'diag_relay_failed';              // 中继都用上了还失败
+  if (hasTurn(p) && !c.relay) return 'diag_no_relay';
+  if (hasTurn(p)) return 'diag_relay_failed';
   if (c.host && c.host === c.mdns) return 'diag_mdns';    // host 候选全被浏览器藏成 .local
   return 'diag_isolated';                                 // 有真实本机地址却握不上手 = 二层被挡
 }
@@ -1196,31 +1288,22 @@ async function connVia(pc) {
 }
 
 /* ── WebRTC mesh ── */
-function addPeer(info, initiator) {
+function addPeer(info, initiator, opt) {
   if (peers.has(info.id)) return;
-  const p = { name: info.name, ua: info.ua, hue: info.hue, slot: info.slot, fp: info.fp, pc: null, dc: null, queue: [], sending: false, recv: null,
-              stuck: false, paused: false, binc: null };
+  opt = opt || {};
+  const p = { id: info.id, name: info.name, ua: info.ua, hue: info.hue, slot: info.slot, fp: info.fp,
+              pc: null, dc: null, queue: [], sending: false, recv: null,
+              stuck: false, paused: false, binc: null,
+              initiator: !!initiator, iceTries: 0, iceBusy: false,
+              edge: opt.edge || 'room',
+              iceServersUsed: opt.iceServers || iceServers };
   peers.set(info.id, p);
   // 10 秒连不上:此设备是服务器牵的线(=同出口/同网络),却打洞失败→几乎必是二层被挡
   // (AP 隔离/访客网络/mDNS)。隐去僵尸条,但给一次可操作诊断,别让用户对着转圈发懵
   // 中继握手要绕经服务器多跑一圈,10s 对它太紧 —— 实测会先误报"连不上"再连上,
   // 用户白受一次惊。有 TURN 可用时把判死时间放宽一倍。
-  p.stuckTimer = setTimeout(() => {
-    if (!p.dc || p.dc.readyState !== 'open') {
-      p.stuck = true;
-      // 同一原因只说一次(否则 N 台连不上就刷 N 屏),但不同原因都值得说
-      const key = diagnose(p);
-      if (!stuckShown.has(key)) {
-        stuckShown.add(key);
-        sysLine(t(key));
-        sysDetail(candSummary(p));   // 技术摘要:用户截图给我就能定位,不用来回猜
-      }
-      if (currentConv === info.id) switchConv('all'); else renderPeers();
-    }
-  }, hasTurn() ? 20000 : 10000);
-  // 同网直连时 host candidate 优先级天然最高,加了 STUN/TURN 也不会绕远路;
-  // 它们只在 host 走不通时才有机会被选中。空数组=服务器没配 = 退回纯局域网行为。
-  const pc = new RTCPeerConnection({ iceServers });
+  armStuckTimer(p);
+  const pc = new RTCPeerConnection({ iceServers: p.iceServersUsed });
   p.pc = pc;
   p.cand = { host: 0, srflx: 0, relay: 0, mdns: 0 };   // 本机候选构成,诊断用
   pc.onicecandidate = ev => {
@@ -1228,9 +1311,7 @@ function addPeer(info, initiator) {
     countCand(p.cand, ev.candidate);
     ws.send(JSON.stringify({ type: 'signal', to: info.id, data: { ice: ev.candidate } }));
   };
-  pc.onconnectionstatechange = () => {
-    if (['failed', 'closed'].includes(pc.connectionState)) { p.dc = null; renderPeers(); }
-  };
+  pc.onconnectionstatechange = () => onIceState(p, pc);
   if (initiator) {
     setupDC(p, pc.createDataChannel('t', { ordered: true }), info.id);
     pc.createOffer().then(o => pc.setLocalDescription(o))
@@ -1257,19 +1338,267 @@ async function handleSignal(from, data) {
   } catch (e) { console.warn('signal error', e); }
 }
 
+function armStuckTimer(p) {
+  if (p.stuckTimer) clearTimeout(p.stuckTimer);
+  p.stuckTimer = setTimeout(() => {
+    if (p.dc && p.dc.readyState === 'open') return;
+    if (p.iceBusy) { armStuckTimer(p); return; }
+    p.stuck = true;
+    const key = diagnose(p);
+    if (!stuckShown.has(key)) {
+      stuckShown.add(key);
+      sysLine(t(key));
+      sysDetail(candSummary(p));
+    }
+    if (currentConv === p.id) switchConv('all'); else renderPeers();
+  }, hasTurn(p) ? 20000 : 10000);
+}
+
+function requestIceRestart(p) {
+  const ZI = window.ZapIce;
+  if (!ZI || !ZI.beginRestart(p)) {
+    if (p && (p.iceTries || 0) >= (ZI ? ZI.MAX_TRIES : 3)) {
+      p.stuck = true; renderPeers();
+    }
+    return;
+  }
+  p._resumeFlushedDc = null;
+  armStuckTimer(p);
+  const pc = p.pc;
+  try { if (pc.setConfiguration) pc.setConfiguration({ iceServers: p.iceServersUsed || [] }); } catch {}
+  try { if (pc.restartIce) pc.restartIce(); } catch {}
+  pc.createOffer({ iceRestart: true }).then(o => pc.setLocalDescription(o))
+    .then(() => {
+      ZI.endRestart(p);
+      if (ws && ws.readyState === 1 && pc.localDescription)
+        ws.send(JSON.stringify({ type: 'signal', to: p.id, data: { sdp: pc.localDescription } }));
+    })
+    .catch(() => { ZI.endRestart(p); });
+}
+
+function onIceState(p, pc) {
+  const ZI = window.ZapIce;
+  const state = pc.connectionState;
+  const act = ZI ? ZI.iceEventAction(p, state) : { action: 'none' };
+  if (act.action === 'reset') {
+    if (ZI) ZI.resetTries(p);
+    flushResume(p);
+    renderPeers();
+    return;
+  }
+  if (act.action === 'wait' || act.action === 'restart') {
+    if (ZR) ZR.parkTransfersForPeer(xferPark, p, recvBatches);
+    p.incoming = null;
+    p._resumeFlushedDc = null;
+  }
+  if (act.action === 'wait') {
+    clearTimeout(p.iceWaitTimer);
+    p.iceWaitTimer = setTimeout(() => {
+      const s = p.pc && p.pc.connectionState;
+      if (s && s !== 'connected' && s !== 'connecting') requestIceRestart(p);
+    }, act.delay);
+  }
+  if (act.action === 'restart') requestIceRestart(p);
+  if (act.action === 'stuck' || state === 'closed') {
+    if (ZR) ZR.parkTransfersForPeer(xferPark, p, recvBatches);
+    if (state === 'closed') p.dc = null;
+    if (act.action === 'stuck') p.stuck = true;
+    renderPeers();
+  }
+}
+
+const xferPark = new Map();
+
+function teardownPc(p, opts) {
+  if (!p) return;
+  if (ZR) ZR.parkTransfersForPeer(xferPark, p, recvBatches);
+  if (p.incoming) p.incoming = null;
+  if (p.stuckTimer) { clearTimeout(p.stuckTimer); p.stuckTimer = null; }
+  try { p.pc && p.pc.close(); } catch {}
+  p.pc = null; p.dc = null;
+}
+
+function onPairIntro(m) {
+  if (!m || !m.peer || !m.peer.id || m.peer.id === myId) return;
+  const existing = peers.get(m.peer.id);
+  if (m.sameRoom || existing) {
+    if (existing) {
+      existing.paired = true;
+      if (existing.dc && existing.dc.readyState === 'open') ensurePairTok(existing);
+    }
+    persistPair({ fp: m.peer.fp, tok: tokOf(m.peer.fp), name: m.peer.name, ua: m.peer.ua, origin: 'intro' });
+    renderPeers();
+    return;
+  }
+  addPeer(m.peer, !!m.initiator, { edge: 'pair', iceServers: m.iceServers || [] });
+  renderPeers();
+}
+
+function onPairIce(m) {
+  const p = peers.get(m.to);
+  if (!p) return;
+  if (m.reason === 'relay') applyPairIceRelay(p, m.iceServers);
+  else applyPairIceRefresh(p, m.iceServers);
+}
+
+function applyPairIceRefresh(p, iceServers) {
+  p.iceServersUsed = iceServers || p.iceServersUsed;
+  if (p.pc && typeof p.pc.setConfiguration === 'function') {
+    try { p.pc.setConfiguration({ iceServers: p.iceServersUsed }); } catch {}
+  }
+}
+
+function applyPairIceRelay(p, iceServers) {
+  p.iceServersUsed = iceServers;
+  const info = { id: p.id, name: p.name, ua: p.ua, hue: p.hue, slot: p.slot, fp: p.fp };
+  const initiator = p.initiator, edge = p.edge;
+  teardownPc(p, { keepPeer: false });
+  peers.delete(p.id);
+  addPeer(info, initiator, { edge, iceServers });
+}
+
+function tokOf(fp) {
+  const rec = pairedDevices.find(r => r.fp === fp);
+  return rec && rec.tok;
+}
+
+function ensurePairTok(p) {
+  if (!ZP || !p || !p.fp || !p.dc || p.dc.readyState !== 'open') return;
+  if (!(p.edge === 'pair' || p.paired || window.__manual)) return;
+  let tok = tokOf(p.fp);
+  if (p.initiator) {
+    if (!tok) tok = ZP.makeTok();
+    persistPair({ fp: p.fp, tok, name: p.name, ua: p.ua, origin: p.edge === 'pair' ? 'nonce' : 'code' });
+    try { p.dc.send(JSON.stringify({ t: 'pairtok', tok })); } catch {}
+  }
+}
+
+function applyPairtok(p, tok) {
+  if (!ZP || !p || !p.fp || !ZP.TOK_RE.test(tok || '')) return;
+  const mine = tokOf(p.fp);
+  const chosen = ZP.pickTok(mine, tok);
+  persistPair({ fp: p.fp, tok: chosen, name: p.name, ua: p.ua, origin: p.edge === 'pair' ? 'nonce' : 'code' });
+  if (p.initiator && chosen === tok && tok !== mine)
+    try { p.dc.send(JSON.stringify({ t: 'pairtok', tok: chosen })); } catch {}
+  else if (!p.initiator)
+    try { p.dc.send(JSON.stringify({ t: 'pairtok', tok: chosen })); } catch {}
+}
+
+function flushResume(p) {
+  if (!ZR || !p || !p.dc || p.dc.readyState !== 'open' || !p.fp) return;
+  if (p._resumeFlushedDc === p.dc) return;
+  p._resumeFlushedDc = p.dc;
+  const act = ZR.flushResumeActions(xferPark, p);
+  for (const msg of act.rpos) {
+    try { p.dc.send(JSON.stringify(msg)); } catch {}
+  }
+  // Sender jobs wait for rpos (handleRposFrame). Do not requeue incomplete here.
+}
+
+function handleRposFrame(p, m) {
+  if (!ZR) return;
+  const r = ZR.handleIncomingRpos(m, myFiles, myBatches);
+  if (r.kind === 'gone') { try { p.dc.send(JSON.stringify(r.gone)); } catch {} return; }
+  if (r.kind === 'requeue') { p.queue.push(r.job); pump(p); }
+}
+
+function handleGoneFrame(p, m) {
+  if (!ZR) return;
+  ZR.applyGoneToPark(xferPark, m, p.fp);
+  const rec = offerCards.get(m.fileId);
+  if (rec && rec.card && rec.card.unavailable) rec.card.unavailable();
+  sysLine(t('file_gone'));
+}
+
+let stuckTargetId = null;
+function explainStuck(id) {
+  const p = peers.get(id);
+  if (!p) return;
+  stuckTargetId = id;
+  const title = document.getElementById('stuck-title');
+  const diag = document.getElementById('stuck-diag');
+  const relay = document.getElementById('stuck-relay');
+  const qrBox = document.getElementById('stuck-qr');
+  if (title) title.textContent = p.name + ' — ' + t('st_stuck');
+  if (diag) diag.textContent = t(diagnose(p));
+  if (relay) relay.style.display = (isPaired(p.fp) || p.edge === 'pair') ? '' : 'none';
+  if (qrBox) { qrBox.classList.remove('show'); qrBox.innerHTML = ''; }
+  document.getElementById('stuckmask').classList.add('show');
+  sysDetail(candSummary(p));
+}
+
+function showPairNonce(nonce) {
+  const box = document.getElementById('stuck-qr');
+  if (!box) return;
+  box.innerHTML = '';
+  box.classList.add('show');
+  const url = location.origin + '/#n=' + nonce;
+  if (window.QRCode) new QRCode(box, { text: url, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
+}
+
+{
+  const mask = document.getElementById('stuckmask');
+  const close = document.getElementById('stuck-close');
+  const relay = document.getElementById('stuck-relay');
+  const qrBtn = document.getElementById('stuck-qr-btn');
+  if (mask) mask.onclick = e => { if (e.target.id === 'stuckmask') mask.classList.remove('show'); };
+  if (close) close.onclick = () => mask && mask.classList.remove('show');
+  if (relay) relay.onclick = () => {
+    if (stuckTargetId && ws && ws.readyState === 1)
+      ws.send(JSON.stringify({ type: 'pair-relay', to: stuckTargetId }));
+  };
+  if (qrBtn) qrBtn.onclick = () => {
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'pair-listen' }));
+  };
+}
+
+function renderPairedList() {
+  const box = document.getElementById('pair-list');
+  if (!box) return;
+  box.innerHTML = '';
+  for (const rec of pairedDevices) {
+    const row = document.createElement('div');
+    row.className = 'pair-row';
+    row.innerHTML = `<span>${esc(rec.name || rec.fp)}</span><button type="button">${t('unpair')}</button>`;
+    row.querySelector('button').onclick = () => {
+      if (!confirm(t('unpair_confirm'))) return;
+      for (const [id, p] of peers) {
+        if (p.fp === rec.fp && p.edge === 'pair') {
+          teardownPc(p, { keepPeer: false });
+          peers.delete(id);
+        }
+      }
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'pair-forget', fp: rec.fp }));
+      dropPair(rec.fp);
+      renderPairedList(); renderPeers();
+    };
+    box.appendChild(row);
+  }
+}
+
 const CHUNK = 64 * 1024, HIGH_WATER = 8 * 1024 * 1024;
 function setupDC(p, dc, id) {
   p.dc = dc;
   dc.binaryType = 'arraybuffer';
   dc.bufferedAmountLowThreshold = 1024 * 1024;
   dc.onopen = () => { p.stuck = false; clearTimeout(p.stuckTimer); renderPeers(); pump(p);
-    advertiseCatalogTo(p);      // 这台刚可达:把本机还在提供的群通告补发给它(晚到/刷新都能补收)
+    advertiseCatalogTo(p);
     trackVia(p);
+    ensurePairTok(p);
+    if (p.edge === 'pair' || p.paired || window.__manual) persistPair({ fp: p.fp, tok: tokOf(p.fp), name: p.name, ua: p.ua, origin: p.edge === 'pair' ? 'nonce' : 'code' });
+    flushResume(p);
   };
-  dc.onclose = () => { p.dc = null; renderPeers(); };
+  dc.onclose = () => {
+    if (ZR) ZR.parkTransfersForPeer(xferPark, p, recvBatches);
+    p.dc = null; renderPeers();
+  };
   dc.onmessage = ev => {
     if (typeof ev.data === 'string') {
       const m = JSON.parse(ev.data);
+      if (p.edge === 'pair' && (m.t === 'text' || m.t === 'offer' || m.t === 'boffer' || m.t === 'pull' || m.t === 'bpull')) return;
+      if (m.t === 'pairtok') { applyPairtok(p, m.tok); return; }
+      if (m.t === 'rpos') { handleRposFrame(p, m); return; }
+      if (m.t === 'gone') { handleGoneFrame(p, m); return; }
       if (m.t === 'text') {                 // 群消息:gossip 去重+转发,身份取帧里的原始发送者
         if (!markSeen(m.mid)) return;
         const rec = { conv: 'all', type: 'text', from: m.from, fromId: m.fromId, kind: m.fromKind, text: m.text, ts: m.ts };
@@ -1374,16 +1703,19 @@ function setupDC(p, dc, id) {
         const st = recvBatches.get(m.batchId);
         if (!st) return;                    // 没在收这批(已取消/已失败)
         p.binc = m.batchId; p.incoming = null;   // 二进制块的归属只能有一个:清掉可能残留的单文件接收
-        // 通告里的 count 是对端说的,不能当数;按真正收到的个数卡上限
         if (st.done + st.skipped >= MAX_BATCH_FILES) { failRecvBatch(st); return; }
         armStall(st);
         chainStep(st, async () => {
-          if (st.cur) { await st.cur.w.close(); st.cur = null; st.skipped++; }  // 上一个没收满就被顶掉
-          const segs = safeSegs(m.path);                  // 路径来自对端,当敌意输入清洗
+          const segs = safeSegs(m.path);
           if (!segs.length) segs.push('file_' + (st.done + 1));
-          const w = await st.sink.file(segs, m.lastModified);
-          st.cur = { w, size: m.size || 0, got: 0 };
-          if (!st.cur.size) { await w.close(); st.cur = null; st.done++; paintRecv(st); }
+          const d = await ZR.applyBatchFmetaAndOpen(st, m, {
+            file: () => st.sink.file(segs, m.lastModified),
+            fileAt: st.sink.fileAt
+              ? (_mm, off) => st.sink.fileAt(segs, m.lastModified, off)
+              : undefined,
+          });
+          if (d.reset || d.action === 'reset-file') sysLine(t('resume_reset'));
+          if (st.cur && !st.cur.size) { await st.cur.w.close(); st.cur = null; st.done++; paintRecv(st); }
         });
       } else if (m.t === 'bend') {
         const st = recvBatches.get(m.batchId);
@@ -1414,8 +1746,13 @@ function setupDC(p, dc, id) {
           if (currentConv === conv) { card = fileCard(meta, 'offer'); card.downloading(() => {}); }
           else bumpUnread(conv);
         }
-        p.incoming = { fileId: m.fileId, meta: m, chunks: [], got: 0, card, conv, t0: Date.now() };
-        p.binc = null;                      // 同上:单文件接管这条通道的二进制块
+        const parked = xferPark.get(m.fileId);
+        const decided = ZR ? ZR.applyIncomingFmeta(m.fileId, m.offset || 0, parked, recvBlobs.has(m.fileId), p.incoming) : { action: 'fresh', chunks: [], got: 0 };
+        if (decided.action === 'ignore' || decided.action === 'keep') return;
+        if (decided.reset) sysLine(t('resume_reset'));
+        if (decided.clearPark) xferPark.delete(m.fileId);
+        p.incoming = { fileId: m.fileId, meta: m, chunks: decided.chunks || [], got: decided.got || 0, card, conv, t0: Date.now() };
+        p.binc = null;
       } else if (m.t === 'fend' && p.incoming && p.incoming.fileId === m.fileId) {
         const inc = p.incoming; p.incoming = null;
         const blob = new Blob(inc.chunks, { type: inc.meta.mime || 'application/octet-stream' });
@@ -1467,10 +1804,16 @@ const ACK_GRACE = 20000;
 function awaitAck(fileId, card, p) {
   const t0 = Date.now();
   const iv = setInterval(() => {
-    if (p && (!p.dc || p.dc.readyState !== 'open')) {   // 通道没了:回执不会来了
+    if (p && (!p.dc || p.dc.readyState !== 'open')) {
       clearInterval(iv); pendingAcks.delete(fileId);
-      if (card.sendFailed) card.sendFailed();
-      sysLine(t('send_failed', { name: (p && p.name) || '' }));
+      const info = myFiles.get(fileId) || myBatches.get(fileId);
+      if (info && p.fp && ZR) {
+        ZR.markIncomplete(info, info.incomplete && info.incomplete.offset, info.incomplete && info.incomplete.done, p.fp);
+        if (card && card.resuming) card.resuming();
+      } else if (card && card.sendFailed) {
+        card.sendFailed();
+        sysLine(t('send_failed', { name: (p && p.name) || '' }));
+      }
       return;
     }
     if (Date.now() - t0 > ACK_GRACE) {                  // 通道还在,只是回执没来
@@ -1485,6 +1828,8 @@ function settleAck(fileId) {
   if (!w) return;
   pendingAcks.delete(fileId); clearInterval(w.iv);
   if (w.card.sent) w.card.sent();
+  const info = myFiles.get(fileId) || myBatches.get(fileId);
+  if (info && ZR) ZR.markXferDone(info);
 }
 // 传输已经判失败了,把等待撤掉 —— 否则稍后又冒出个"未确认",盖掉"发送中断"的结论
 function cancelAck(fileId) {
@@ -1499,11 +1844,17 @@ async function pump(p) {
   p.sending = true;
   try { await (job.batch ? pumpBatch(p, job) : pumpFile(p, job)); }
   catch (e) {
-    // 不再静默:发送方必须知道这次没成。否则界面停在某个百分比,或更糟——显示"已发送"
     console.warn('[send] 传输中断:', e && e.message);
     cancelAck(job.fileId || job.batchId);
-    if (job.card && job.card.sendFailed) job.card.sendFailed();
-    sysLine(t('send_failed', { name: p.name || '' }));
+    const info = job.file ? myFiles.get(job.fileId) : myBatches.get(job.batchId);
+    if (info && ZR) ZR.markXferIdle(info);
+    if (info && p.fp && ZR) {
+      ZR.markIncomplete(info, job.offset || 0, job.done || 0, p.fp);
+      if (job.card && job.card.resuming) job.card.resuming();
+    } else {
+      if (job.card && job.card.sendFailed) job.card.sendFailed();
+      sysLine(t('send_failed', { name: p.name || '' }));
+    }
   }
   p.sending = false;
   pump(p);
@@ -1523,12 +1874,16 @@ function waitDrainBelow(p, limit, alive) {
 }
 
 async function pumpFile(p, job) {
+  const info = myFiles.get(job.fileId);
+  if (info && ZR) ZR.markXferSending(info);
   const t0 = Date.now(), size = job.file.size;
   const alive = () => p.dc && p.dc.readyState === 'open';
   if (!alive()) throw new Error('channel gone');
+  const startOff = (ZR ? ZR.fileSlicePlan(size, job.offset || 0, CHUNK).offset : 0);
   p.dc.send(JSON.stringify({ t: 'fmeta', fileId: job.fileId, name: job.file.name,
-                             size, mime: job.file.type }));
-  let off = 0;
+                             size, mime: job.file.type, offset: startOff }));
+  let off = startOff;
+  job.offset = off;
   while (off < size) {
     if (!alive()) throw new Error('channel gone');   // 隔壁 pumpBatch 一直有这道守卫,这里漏了
     if (p.dc.bufferedAmount > HIGH_WATER) { await waitDrainBelow(p, HIGH_WATER, alive); continue; }
@@ -1553,16 +1908,22 @@ async function pumpFile(p, job) {
 // 静默截断比少传一个文件更糟,对方必须知道这批不完整。
 async function pumpBatch(p, job) {
   const b = job.batch, total = b.meta.totalSize, t0 = Date.now();
-  let doneBytes = 0, doneFiles = 0, skipped = 0;
+  if (b && ZR) ZR.markXferSending(b);
+  const plan = ZR ? ZR.batchResumePlan(b.items, job.done || 0, job.offset || 0) : { startIndex: 0, firstOffset: 0, remaining: b.items };
+  let doneBytes = 0, doneFiles = plan.startIndex, skipped = 0;
   const card = job.card;
   const alive = () => p.dc && p.dc.readyState === 'open';
-  for (const it of b.items) {
+  let first = true;
+  for (const it of plan.remaining) {
     if (!alive()) throw new Error('channel gone');
     await waitResume(p);
     try {
+      const startOff = first ? plan.firstOffset : 0;
+      first = false;
+      job.done = doneFiles; job.offset = startOff;
       p.dc.send(JSON.stringify({ t: 'fmeta', batchId: job.batchId, fileId: it.fileId,
-        path: it.path, size: it.file.size, mime: it.file.type, lastModified: it.file.lastModified }));
-      let off = 0;
+        path: it.path, size: it.file.size, mime: it.file.type, lastModified: it.file.lastModified, offset: startOff }));
+      let off = startOff;
       while (off < it.file.size) {
         if (!alive()) throw new Error('channel gone');
         if (p.dc.bufferedAmount > HIGH_WATER) { await waitDrainBelow(p, HIGH_WATER, alive); continue; }
@@ -1623,7 +1984,8 @@ async function streamFileTo(info, file, fileId, selfCard) {
 }
 
 /* ── 发送入口:群聊=全员,私聊=目标设备 ── */
-function targets() { return [...peers.values()].filter(p => p.dc && p.dc.readyState === 'open'); }
+function isRoomEdge(p) { return p && p.edge !== 'pair'; }
+function targets() { return [...peers.values()].filter(p => isRoomEdge(p) && p.dc && p.dc.readyState === 'open'); }
 function convTargets() {
   if (currentConv === 'all') return targets();
   const p = peers.get(currentConv);
@@ -1637,7 +1999,7 @@ function newMid() { return myId + ':' + (++msgSeq); }
 function markSeen(mid) { if (!mid || seen.has(mid)) return false; seen.add(mid); if (seen.size > 8000) seen.clear(); return true; }
 function broadcastFrame(obj, exceptId) {   // 发给所有已连邻居(除来源),字符串帧
   const s = JSON.stringify(obj);
-  for (const [id, p] of peers) if (id !== exceptId && p.dc && p.dc.readyState === 'open') { try { p.dc.send(s); } catch {} }
+  for (const [id, p] of peers) if (id !== exceptId && isRoomEdge(p) && p.dc && p.dc.readyState === 'open') { try { p.dc.send(s); } catch {} }
 }
 
 function sendText() {
@@ -1666,10 +2028,71 @@ txt.addEventListener('input', () => {
   txt.style.height = 'auto'; txt.style.height = Math.min(txt.scrollHeight, 110) + 'px';
 });
 
-plus.onclick = () => fileInput.click();
+plus.onclick = () => { sendOverrideConv = null; fileInput.click(); };
 const attach = document.getElementById('attach');
-if (attach) attach.onclick = () => fileInput.click();
-fileInput.onchange = () => { [...fileInput.files].forEach(sendFile); fileInput.value = ''; };
+if (attach) attach.onclick = () => { sendOverrideConv = null; fileInput.click(); };
+let sendOverrideConv = null;
+try { var lastSendTargetFp = localStorage.lastSendTargetFp || ''; } catch { var lastSendTargetFp = ''; }
+
+function homeTargets() {
+  return [...peers.entries()]
+    .map(([id, p]) => ({ id, p }))
+    .filter(x => x.p.dc && x.p.dc.readyState === 'open' && (isPaired(x.p.fp) || isTrusted(x.p.fp)))
+    .sort((a, b) => (b.p.fp === lastSendTargetFp ? 1 : 0) - (a.p.fp === lastSendTargetFp ? 1 : 0));
+}
+
+function startSendHome(target) {
+  sendOverrideConv = target.id;
+  lastSendTargetFp = target.p.fp || '';
+  try { localStorage.lastSendTargetFp = lastSendTargetFp; } catch {}
+  const list = document.getElementById('sendhome-list');
+  if (list) list.classList.remove('show');
+  fileInput.click();
+}
+
+function showSendHomeList(targets) {
+  const box = document.getElementById('sendhome-list');
+  if (!box) return;
+  box.innerHTML = targets.map(x =>
+    `<button type="button" data-id="${esc(x.id)}">${esc(x.p.name)} · ${x.p.ua === 'mobile' ? '📱' : '💻'}</button>`
+  ).join('');
+  box.querySelectorAll('button').forEach(btn => {
+    btn.onclick = () => {
+      const hit = targets.find(x => x.id === btn.dataset.id);
+      if (hit) startSendHome(hit);
+    };
+  });
+  box.classList.add('show');
+}
+
+function updateSendHome() {
+  const btn = document.getElementById('send-home');
+  if (!btn) return;
+  const list = homeTargets();
+  if (!list.length) { btn.style.display = 'none'; return; }
+  btn.style.display = '';
+  if (list.length === 1) {
+    const p = list[0].p;
+    btn.textContent = (p.ua !== 'mobile' && myKind === 'mobile')
+      ? t('send_to_computer') : t('send_to_device', { name: p.name });
+    btn.onclick = ev => { ev.stopPropagation(); startSendHome(list[0]); };
+  } else {
+    btn.textContent = t('send_to_computer');
+    btn.onclick = ev => { ev.stopPropagation(); showSendHomeList(list); };
+  }
+}
+document.addEventListener('click', e => {
+  const box = document.getElementById('sendhome-list');
+  if (box && !box.contains(e.target) && e.target.id !== 'send-home') box.classList.remove('show');
+});
+
+fileInput.onchange = () => {
+  const files = [...fileInput.files];
+  fileInput.value = '';
+  if (!files.length) { sendOverrideConv = null; return; }
+  files.forEach(sendFile);
+};
+fileInput.addEventListener('cancel', () => { sendOverrideConv = null; });
 // 重新发送:刷新后原文件字节已丢,切到该会话并重开文件选择器让用户重选一次
 function resendFile(m) { switchConv(m.conv || 'all'); fileInput.click(); }
 
@@ -1752,7 +2175,9 @@ async function sendFolderFromEntry(dirEntry) {
 async function sendFolder(items, rootRaw) {
   if (!items.length) { sysLine(t('folder_empty')); return; }
   if (items.length > MAX_BATCH_FILES) { sysLine(t('folder_too_many', { n: MAX_BATCH_FILES })); return; }
-  const conv = currentConv;                 // 捕获当前会话,与 sendFile 的不变量一致
+  const conv = sendOverrideConv || currentConv;
+  if (sendOverrideConv && sendOverrideConv !== currentConv) switchConv(sendOverrideConv);
+  sendOverrideConv = null;
   const ts = Date.now();
   const root = safeName(rootRaw);
   const strip = rootRaw + '/';
@@ -1810,7 +2235,9 @@ function knownBatch(batchId) {
 
 // 群聊=贴通告(状态化,谁可达谁补收),文件留本机等人来拉;私聊=直推给对方那台(发了就到,不用点下载)
 async function sendFile(file) {
-  const conv = currentConv;                 // 捕获当前会话:'all'=群 / peerId=私聊
+  const conv = sendOverrideConv || currentConv;
+  if (sendOverrideConv && sendOverrideConv !== currentConv) switchConv(sendOverrideConv);
+  sendOverrideConv = null;
   const ts = Date.now();
   const fileId = 'f' + Math.random().toString(36).slice(2, 10);
   const thumb = isImg(file.name) ? await makeThumb(file).catch(() => null) : null;
@@ -1840,7 +2267,7 @@ function sendFreq(p, fileId, pin) {
 }
 // 目录同步:把本机还在提供的群聊通告定向补发给刚可达的一台设备(复用原 mid,老设备自动去重)
 function advertiseCatalogTo(p) {
-  if (!p || !p.dc || p.dc.readyState !== 'open') return;
+  if (!p || !p.dc || p.dc.readyState !== 'open' || p.edge === 'pair') return;
   for (const info of myFiles.values())
     if (info.group) p.dc.send(JSON.stringify({ t: 'offer', mid: info.mid, ...info.meta }));
   for (const b of myBatches.values())

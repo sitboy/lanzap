@@ -2,7 +2,7 @@
 
 # Zap · 近传
 
-**Same Wi‑Fi, open & send.**
+**Scan & send. Same Wi‑Fi is a bonus.**
 
 An AirDrop you don't install — a transfer helper without the login.
 Devices on the same network open one URL and land in the same chat; text and files
@@ -44,7 +44,7 @@ English ·
 - 🌐 **Paired across networks, with a relay as the last resort** — scanning a QR code is you saying “connect these two”, so that room also gets a TURN relay. A direct path is always preferred; if only the relay works, the device is labelled **Via relay** in the UI. Even then the bytes stay end‑to‑end encrypted (DTLS) — the relay forwards them but cannot read them
 - 📁 **Whole folders, structure intact** — drag one in or pick it; on desktop Chromium it is written straight back to disk as a real folder tree, other browsers get a ZIP
 - 👥 **Group + private chats** — one “Everyone” room plus a private thread with each device
-- 📷 **Three ways to pair** — automatic same‑network discovery / in‑page QR scan / 5‑char room code / shareable link
+- 📷 **Four ways to pair** — in‑page QR scan / 5‑char room code / shareable link / automatic same‑network discovery
 - 🌍 **18 languages**, switched in place; 🌗 **dark mode** follows the system
 - 📝 **History lives only in your browser** (IndexedDB) — invisible from other devices
 - 🪶 **Zero framework, zero build** — the server needs only `ws`; the front end is plain vanilla JS
@@ -91,6 +91,7 @@ Two tiers, and which one you get depends on how the devices found each other:
 | --- | --- | --- |
 | Automatic same‑network discovery | STUN only | Always device‑to‑device |
 | Paired explicitly (QR / room code / link) | STUN **+ TURN** | Direct if at all possible; relay only as the last resort, and labelled as such |
+| Re‑introduced paired edge, or “Relay this pair” | STUN **+ TURN** (that pair only) | Same as above; other devices in the auto‑LAN room still get no TURN |
 
 The split is deliberate: the default path can never relay, so “files don't touch the server”
 is a property of the code rather than a promise. Asking for a relay takes a deliberate act —

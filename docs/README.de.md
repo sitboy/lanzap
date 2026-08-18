@@ -2,7 +2,7 @@
 
 # Zap
 
-**Gleiches WLAN, öffnen & senden.**
+**Scannen & senden. Gleiches WLAN ist ein Bonus.**
 
 Ein AirDrop, das man nicht installieren muss — ein Übertragungshelfer ohne Login.
 Geräte im selben Netzwerk öffnen eine URL und landen im selben Chat; Text und Dateien

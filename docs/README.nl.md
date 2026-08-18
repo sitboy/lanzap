@@ -2,7 +2,7 @@
 
 # Zap
 
-**Zelfde wifi, open & verstuur.**
+**Scan en verstuur. Hetzelfde wifi-netwerk is een bonus.**
 
 Een AirDrop die je niet hoeft te installeren — een overdrachtshulpje zonder inloggen.
 Apparaten op hetzelfde netwerk openen één URL en komen in dezelfde chat terecht; tekst en

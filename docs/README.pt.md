@@ -2,7 +2,7 @@
 
 # Zap
 
-**Mesmo Wi‑Fi, abra e envie.**
+**Escaneie e envie. O mesmo Wi‑Fi é um bônus.**
 
 Um AirDrop que você não precisa instalar — um assistente de transferência sem login.
 Dispositivos na mesma rede abrem uma URL e caem no mesmo chat; texto e arquivos

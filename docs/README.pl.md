@@ -2,7 +2,7 @@
 
 # Zap
 
-**Ta sama sieć Wi‑Fi, otwórz i wyślij.**
+**Skanuj i wyślij. Ta sama sieć Wi‑Fi to bonus.**
 
 AirDrop, którego nie trzeba instalować — pomocnik do przesyłania plików bez logowania.
 Urządzenia w tej samej sieci otwierają jeden adres URL i trafiają do tego samego czatu; tekst i pliki

@@ -2,7 +2,7 @@
 
 # Zap
 
-**Même Wi‑Fi, ouvrez et envoyez.**
+**Scannez et envoyez. Le même Wi‑Fi est un bonus.**
 
 Un AirDrop que vous n'avez pas besoin d'installer — un assistant de transfert sans connexion.
 Les appareils sur le même réseau ouvrent une URL et se retrouvent dans le même salon ; le texte et les fichiers

@@ -5,40 +5,51 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
+const pairingLib = require('./pairing');
 
-const PORT = process.env.PORT || 8879;
 const PUB = path.join(__dirname, 'public');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
                '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json' };
 
-const server = http.createServer((req, res) => {
-  let p = req.url.split('?')[0];
-  if (p === '/') p = '/index.html';
-  const fp = path.join(PUB, path.normalize(p));
-  if (!fp.startsWith(PUB)) { res.writeHead(404); return res.end(); }
-  let st;
-  try { st = fs.statSync(fp); } catch { res.writeHead(404); return res.end(); }
-  if (!st.isFile()) { res.writeHead(404); return res.end(); }
-  /* 一个缓存头都不发的话,浏览器(手机上尤其激进)会拿着旧 app.js 不放,
-   * 结果是"明明部署了却没生效",只能教用户强刷 —— 踩过一次。
-   * no-cache 不等于不缓存:它让浏览器每次回来验一下 ETag,没变就是 304(几十字节),
-   * 变了才重新下载。文件按 mtime+size 派生 ETag,rsync 上去就自动失效。 */
-  const etag = `"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`;
-  if (req.headers['if-none-match'] === etag) { res.writeHead(304); return res.end(); }
-  res.writeHead(200, {
-    'Content-Type': MIME[path.extname(fp)] || 'application/octet-stream',
-    'Cache-Control': 'no-cache',
-    'ETag': etag,
-  });
-  fs.createReadStream(fp).pipe(res);
-});
+/* ── ICE 配置下发 ──────────────────────────────────────────────────
+ * 这里是本项目唯一一处"文件可能经过服务器"的开关,红线就落在这几行:
+ *
+ *   自动发现的本网大房间  → 只给 STUN。STUN 只回一句"你的公网 IP:端口",
+ *                          几十字节,文件依旧端到端直传,永不经过服务器。
+ *   显式扫码/输码组队房    → 额外下发 TURN 凭据。用户主动组队 = 明确表达了
+ *                          "我就要连这两台",此时才允许中继兜底,且客户端会
+ *                          在界面上明示"正在通过中继传输",不偷偷走。
+ *   同房 pair-intro        → 仍走 iceConfig(false)。配过对的人回家进同一自动房
+ *                          不得借 intro 把 TURN 凭据带进本网房。跨房 intro /
+ *                          pair-relay 才 iceConfig(true)，且只给这一对。
+ *
+ * 未配 TURN_HOST 时行为完全退回老样子(纯 host candidate),开源部署者不配
+ * 就是零依赖的纯局域网版本。
+ */
+function iceConfig(manual) {
+  const host = process.env.TURN_HOST || '';
+  const secret = process.env.TURN_SECRET || '';
+  if (!host) return [];
+  const stun = { urls: [`stun:${host}:3478`] };
+  if (!manual || !secret) return [stun];
+  const ttl = 2 * 3600;
+  const username = `${Math.floor(Date.now() / 1000) + ttl}:zap`;
+  const credential = crypto.createHmac('sha1', secret).update(username).digest('base64');
+  return [stun, {
+    urls: [`turn:${host}:3478?transport=udp`, `turn:${host}:3478?transport=tcp`],
+    username, credential,
+  }];
+}
 
-// rooms: key -> Map<peerId, ws>
+function pairingOn() { return process.env.ZAP_PAIRING !== '0'; }
+
 const rooms = new Map();
 // DoS 护栏:信令都是小 JSON,房间是局域网规模;超限直接拒绝,防内存被灌爆
 const MAX_ROOMS = 5000;       // 全局房间数上限
 const MAX_PER_ROOM = 50;      // 单房设备数上限(局域网远达不到)
 const MAX_MSG = 256 * 1024;   // 单条信令上限(WebRTC SDP 通常 <10KB)
+
+const pairing = pairingLib.createPairing({ iceConfig, pairingEnabled: pairingOn });
 
 function clientIp(req) {
   // X-Real-IP 由 nginx 注入(不可伪造);退 XFF 首段;再退 socket
@@ -63,110 +74,122 @@ function roomCode(key) {
   return h.toString(36).slice(-4).toUpperCase();
 }
 
-/* ── ICE 配置下发 ──────────────────────────────────────────────────
- * 这里是本项目唯一一处"文件可能经过服务器"的开关,红线就落在这几行:
- *
- *   自动发现的本网大房间  → 只给 STUN。STUN 只回一句"你的公网 IP:端口",
- *                          几十字节,文件依旧端到端直传,永不经过服务器。
- *   显式扫码/输码组队房    → 额外下发 TURN 凭据。用户主动组队 = 明确表达了
- *                          "我就要连这两台",此时才允许中继兜底,且客户端会
- *                          在界面上明示"正在通过中继传输",不偷偷走。
- *
- * 未配 TURN_HOST 时行为完全退回老样子(纯 host candidate),开源部署者不配
- * 就是零依赖的纯局域网版本。
- */
-const TURN_HOST = process.env.TURN_HOST || '';        // 例:file.joestudy.net
-const TURN_SECRET = process.env.TURN_SECRET || '';    // 与 coturn static-auth-secret 一致
-const TURN_TTL = 2 * 3600;                            // 凭据有效期 2 小时
-
-function iceConfig(manual) {
-  if (!TURN_HOST) return [];
-  const stun = { urls: [`stun:${TURN_HOST}:3478`] };
-  if (!manual || !TURN_SECRET) return [stun];
-  // coturn 的时间限凭据(use-auth-secret):username 自带过期时间戳,
-  // password 现算。客户端永远拿不到长期密码,抓包泄漏也只在有效期内有意义。
-  const username = `${Math.floor(Date.now() / 1000) + TURN_TTL}:zap`;
-  const credential = crypto.createHmac('sha1', TURN_SECRET).update(username).digest('base64');
-  return [stun, {
-    urls: [`turn:${TURN_HOST}:3478?transport=udp`, `turn:${TURN_HOST}:3478?transport=tcp`],
-    username, credential,
-  }];
+function createHttpServer() {
+  return http.createServer((req, res) => {
+    let p = req.url.split('?')[0];
+    if (p === '/') p = '/index.html';
+    const fp = path.join(PUB, path.normalize(p));
+    if (!fp.startsWith(PUB)) { res.writeHead(404); return res.end(); }
+    let st;
+    try { st = fs.statSync(fp); } catch { res.writeHead(404); return res.end(); }
+    if (!st.isFile()) { res.writeHead(404); return res.end(); }
+    /* 一个缓存头都不发的话,浏览器(手机上尤其激进)会拿着旧 app.js 不放,
+     * 结果是"明明部署了却没生效",只能教用户强刷 —— 踩过一次。
+     * no-cache 不等于不缓存:它让浏览器每次回来验一下 ETag,没变就是 304(几十字节),
+     * 变了才重新下载。文件按 mtime+size 派生 ETag,rsync 上去就自动失效。 */
+    const etag = `"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`;
+    if (req.headers['if-none-match'] === etag) { res.writeHead(304); return res.end(); }
+    res.writeHead(200, {
+      'Content-Type': MIME[path.extname(fp)] || 'application/octet-stream',
+      'Cache-Control': 'no-cache',
+      'ETag': etag,
+    });
+    fs.createReadStream(fp).pipe(res);
+  });
 }
 
-const wss = new WebSocketServer({ server, maxPayload: MAX_MSG });
-wss.on('connection', (ws, req) => {
-  const autoKey = roomKey(req);
-  let room = null, key = null, peerId = null;
+function attachSignaling(server) {
+  const wss = new WebSocketServer({ server, maxPayload: MAX_MSG });
+  wss.on('connection', (ws, req) => {
+    const autoKey = roomKey(req);
+    let room = null, key = null, peerId = null;
 
-  const peersInfo = () => [...room.entries()].map(([id, s]) => ({ id, name: s._name, ua: s._ua, hue: s._hue, slot: s._slot, fp: s._fp }));
-  // 头像调色板槽位:给每台设备分房内最小空闲槽(离开即腾出、复用),客户端据此取精选色,不撞色也不乱
-  const pickSlot = () => { const used = new Set(); for (const s of room.values()) if (s._slot != null) used.add(s._slot);
-                           let i = 0; while (used.has(i)) i++; return i; };
-  const sendTo = (id, obj) => { const s = room.get(id); if (s && s.readyState === 1) s.send(JSON.stringify(obj)); };
-  const broadcast = (obj, exceptId) => {
-    if (!room) return;
-    for (const [id, s] of room) if (id !== exceptId && s.readyState === 1) s.send(JSON.stringify(obj));
-  };
+    const peersInfo = () => [...room.entries()].map(([id, s]) => ({ id, name: s._name, ua: s._ua, hue: s._hue, slot: s._slot, fp: s._fp }));
+    const pickSlot = () => { const used = new Set(); for (const s of room.values()) if (s._slot != null) used.add(s._slot);
+                             let i = 0; while (used.has(i)) i++; return i; };
+    const sendTo = (id, obj) => { const s = room.get(id); if (s && s.readyState === 1) s.send(JSON.stringify(obj)); };
+    const broadcast = (obj, exceptId) => {
+      if (!room) return;
+      for (const [id, s] of room) if (id !== exceptId && s.readyState === 1) s.send(JSON.stringify(obj));
+    };
 
-  ws.on('message', raw => {
-    let m; try { m = JSON.parse(raw); } catch { return; }
-    if (m.type === 'hello') {
-      // {type:hello, id, name, ua, room?} —— room=手动组队码(扫码/链接),覆盖出口 IP 自动分组
-      const manual = typeof m.room === 'string' && /^[A-Z0-9]{4,8}$/.test(m.room);
-      // lan = 客户端读到本地子网派生的键(尽力而为):代理设备同子网可借此自动重聚,不受出口 IP 影响
-      const lan = typeof m.lan === 'string' && /^[a-z0-9]{3,16}$/.test(m.lan);
-      key = manual ? 'code:' + m.room : (lan ? 'lan:' + m.lan : autoKey);
-      room = rooms.get(key);
-      if (!room) {
-        if (rooms.size >= MAX_ROOMS) { ws.close(1013, 'server busy'); return; }
-        room = new Map(); rooms.set(key, room);
+    ws.on('message', raw => {
+      let m; try { m = JSON.parse(raw); } catch { return; }
+      if (m.type === 'hello') {
+        const manual = typeof m.room === 'string' && /^[A-Z0-9]{4,8}$/.test(m.room);
+        // lan = 客户端读到本地子网派生的键(尽力而为):代理设备同子网可借此自动重聚
+        const lan = typeof m.lan === 'string' && /^[a-z0-9]{3,16}$/.test(m.lan);
+        key = manual ? 'code:' + m.room : (lan ? 'lan:' + m.lan : autoKey);
+        room = rooms.get(key);
+        if (!room) {
+          if (rooms.size >= MAX_ROOMS) { ws.close(1013, 'server busy'); return; }
+          room = new Map(); rooms.set(key, room);
+        }
+        // 满员且不是已在房的重连 → 拒绝(重连由下方同 id 顶替处理)
+        if (room.size >= MAX_PER_ROOM && !room.has(String(m.id).slice(0, 40))) {
+          ws.close(1013, 'room full'); return;
+        }
+        peerId = String(m.id).slice(0, 40);
+        ws._id = peerId;
+        ws._roomKey = key;
+        ws._name = String(m.name || '设备').slice(0, 40);
+        ws._ua = String(m.ua || '').slice(0, 20);
+        ws._hue = (typeof m.hue === 'number' && m.hue >= 0 && m.hue < 360) ? m.hue : undefined;
+        ws._fp = String(m.fp || '').slice(0, 40) || undefined;
+        ws._pairs = pairingLib.parsePairs(m.pairs);
+        // 同 id 重连:顶掉旧连接,并沿用它原来的槽位(颜色不变);新设备取最小空闲槽
+        const old = room.get(peerId);
+        ws._slot = (old && old._slot != null) ? old._slot : pickSlot();
+        if (old && old !== ws) try { old.close(); } catch {}
+        room.set(peerId, ws);
+        // 诊断(按需):LANZAP_DEBUG=1 看出口/房间键,定位"同网却分家"
+        if (process.env.LANZAP_DEBUG)
+          console.log(`[room] ${new Date().toISOString()} ip=${clientIp(req)} key=${key} room#=${room.size} ua=${ws._ua} name=${ws._name}`);
+        ws._manual = manual;   // 定期刷新凭据时要知道这条连接该不该给 TURN
+        ws.send(JSON.stringify({ type: 'peers', you: peerId, slot: ws._slot,
+          room: manual ? m.room : roomCode(key), manual,
+          iceServers: iceConfig(manual),
+          peers: peersInfo().filter(p => p.id !== peerId) }));
+        broadcast({ type: 'peer-joined', peer: { id: peerId, name: ws._name, ua: ws._ua, hue: ws._hue, slot: ws._slot, fp: ws._fp } }, peerId);
+        pairing.onHelloAttached(ws);
+      } else if (m.type === 'rename' && peerId) {
+        ws._name = String(m.name || '').slice(0, 40) || ws._name;
+        if (typeof m.hue === 'number' && m.hue >= 0 && m.hue < 360) ws._hue = m.hue;
+        broadcast({ type: 'peer-renamed', id: peerId, name: ws._name, hue: ws._hue }, peerId);
+      } else if (m.type === 'signal' && peerId && m.to) {
+        const to = String(m.to).slice(0, 40);
+        // WebRTC offer/answer/ice 中转 —— 同房走 sendTo;跨房配对边走 liveEdges
+        pairing.routeSignal(peerId, to, m.data, room, sendTo);
+      } else if (m.type === 'pair-listen' && peerId) {
+        pairing.handleListen(ws);
+      } else if (m.type === 'pair-claim' && peerId) {
+        pairing.handleClaim(ws, m.nonce);
+      } else if (m.type === 'pair-relay' && peerId) {
+        pairing.handleRelay(ws, m.to, room);
+      } else if (m.type === 'pair-forget' && peerId) {
+        pairing.handleForget(ws, m.fp);
       }
-      // 满员且不是已在房的重连 → 拒绝(重连由下方同 id 顶替处理)
-      if (room.size >= MAX_PER_ROOM && !room.has(String(m.id).slice(0, 40))) {
-        ws.close(1013, 'room full'); return;
+    });
+
+    const bye = () => {
+      pairing.bye(ws);
+      if (room && peerId && room.get(peerId) === ws) {
+        room.delete(peerId);
+        broadcast({ type: 'peer-left', id: peerId });
+        if (room.size === 0) rooms.delete(key);
       }
-      peerId = String(m.id).slice(0, 40);
-      ws._name = String(m.name || '设备').slice(0, 40);
-      ws._ua = String(m.ua || '').slice(0, 20);
-      ws._hue = (typeof m.hue === 'number' && m.hue >= 0 && m.hue < 360) ? m.hue : undefined;
-      ws._fp = String(m.fp || '').slice(0, 40) || undefined;   // 持久设备指纹:客户端 localStorage 稳定值,用于收藏/信任(仅中转)
-      // 同 id 重连:顶掉旧连接,并沿用它原来的槽位(颜色不变);新设备取最小空闲槽
-      const old = room.get(peerId);
-      ws._slot = (old && old._slot != null) ? old._slot : pickSlot();
-      if (old && old !== ws) try { old.close(); } catch {}
-      room.set(peerId, ws);
-      // 诊断(按需):看每台设备真实呈现的出口/房间键,定位"同网却分家"的真因。LANZAP_DEBUG=1 才开
-      if (process.env.LANZAP_DEBUG)
-        console.log(`[room] ${new Date().toISOString()} ip=${clientIp(req)} key=${key} room#=${room.size} ua=${ws._ua} name=${ws._name}`);
-      ws._manual = manual;   // 定期刷新凭据时要知道这条连接该不该给 TURN
-      ws.send(JSON.stringify({ type: 'peers', you: peerId, slot: ws._slot,
-        room: manual ? m.room : roomCode(key), manual,
-        iceServers: iceConfig(manual),
-        peers: peersInfo().filter(p => p.id !== peerId) }));
-      broadcast({ type: 'peer-joined', peer: { id: peerId, name: ws._name, ua: ws._ua, hue: ws._hue, slot: ws._slot, fp: ws._fp } }, peerId);
-    } else if (m.type === 'rename' && peerId) {
-      ws._name = String(m.name || '').slice(0, 40) || ws._name;
-      if (typeof m.hue === 'number' && m.hue >= 0 && m.hue < 360) ws._hue = m.hue;
-      broadcast({ type: 'peer-renamed', id: peerId, name: ws._name, hue: ws._hue }, peerId);
-    } else if (m.type === 'signal' && peerId && m.to) {
-      // WebRTC offer/answer/ice 中转 —— 服务器可见的唯一"内容"就是这几百字节握手
-      sendTo(m.to, { type: 'signal', from: peerId, data: m.data });
-    }
+    };
+    ws.on('close', bye);
+    ws.on('error', bye);
   });
+  return wss;
+}
 
-  const bye = () => {
-    if (room && peerId && room.get(peerId) === ws) {
-      room.delete(peerId);
-      broadcast({ type: 'peer-left', id: peerId });
-      if (room.size === 0) rooms.delete(key);
-    }
-  };
-  ws.on('close', bye);
-  ws.on('error', bye);
-});
+const server = createHttpServer();
+const wss = attachSignaling(server);
 
 // 心跳:清理僵尸连接
-setInterval(() => {
+const hbTimer = setInterval(() => {
   for (const room of rooms.values())
     for (const s of room.values()) {
       if (s._dead) { try { s.terminate(); } catch {} continue; }
@@ -174,14 +197,40 @@ setInterval(() => {
       s.once('pong', () => { s._dead = false; });
     }
 }, 30000);
+hbTimer.unref();
 
 // TURN 凭据 2 小时过期。页面挂一天不动的情况真实存在(桌面标签页),
 // 到期后新建的连接会认证失败且无从察觉,所以留够余量主动补发。
-if (TURN_HOST) setInterval(() => {
+// 房间 ice-refresh 只按 _manual;配对边走 pairing.refreshPairIce,不污染本网房。
+const iceTimer = setInterval(() => {
+  if (!process.env.TURN_HOST) return;
   for (const room of rooms.values())
     for (const s of room.values())
       if (s.readyState === 1)
         s.send(JSON.stringify({ type: 'ice-refresh', iceServers: iceConfig(s._manual) }));
+  pairing.refreshPairIce(rooms);
 }, 100 * 60 * 1000);
+iceTimer.unref();
 
-server.listen(PORT, () => console.log(`lan-transfer signaling on :${PORT}`));
+function startServer(port) {
+  const p = port == null ? (process.env.PORT || 8879) : port;
+  return new Promise((resolve, reject) => {
+    const onErr = err => { server.removeListener('error', onErr); reject(err); };
+    server.once('error', onErr);
+    server.listen(p, () => {
+      server.removeListener('error', onErr);
+      const addr = server.address();
+      const bound = typeof addr === 'object' && addr ? addr.port : p;
+      resolve({ server, port: bound, wss, rooms, pairing, iceConfig });
+    });
+  });
+}
+
+if (require.main === module) {
+  startServer().then(({ port }) => console.log(`lan-transfer signaling on :${port}`));
+}
+
+module.exports = {
+  server, startServer, iceConfig, pairing, rooms, pairingLib,
+  parsePairs: pairingLib.parsePairs, canIntro: pairingLib.canIntro, edgeKey: pairingLib.edgeKey,
+};

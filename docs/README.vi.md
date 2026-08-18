@@ -2,7 +2,7 @@
 
 # Zap
 
-**Cùng Wi-Fi, mở là gửi.**
+**Quét và gửi. Cùng Wi-Fi là phần thưởng.**
 
 Một AirDrop không cần cài đặt — công cụ chuyển file không cần đăng nhập.
 Các thiết bị trong cùng mạng chỉ cần mở một URL là vào chung một cuộc trò chuyện; văn bản và

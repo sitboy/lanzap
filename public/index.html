@@ -183,8 +183,26 @@
   #conv-star.on { color:#f5b301; }
   #conv-star.on svg path { fill:#f5b301; stroke:#f5b301; }
   .star-in { color:#f5b301; font-size:.86em; }
-  #pinmask { position:fixed; inset:0; z-index:70; display:none; background:rgba(10,12,14,.42); align-items:center; justify-content:center; }
-  #pinmask.show { display:flex; }
+  #pinmask, #stuckmask { position:fixed; inset:0; z-index:70; display:none; background:rgba(10,12,14,.42); align-items:center; justify-content:center; }
+  #pinmask.show, #stuckmask.show { display:flex; }
+  #stuck-card { background:var(--card); border-radius:var(--r-modal); padding:22px 24px; width:300px;
+    text-align:center; box-shadow:0 16px 48px rgba(10,12,14,.28); }
+  #stuck-card h3 { font-size:15px; font-weight:600; margin-bottom:8px; }
+  #stuck-card button.block { display:block; width:100%; border:none; border-radius:10px;
+    height:44px; font-size:15px; cursor:pointer; margin-top:10px; }
+  #stuck-card .primary { background:linear-gradient(150deg,var(--brand-hi),var(--brand-2));
+    color:#fff; font-weight:600; }
+  #stuck-card .minor { background:var(--panel); color:var(--ink); height:40px; }
+  #stuck-diag { font-size:13px; color:var(--ink-2); line-height:1.5; margin-bottom:14px; }
+  #stuck-qr { display:none; margin:8px auto 12px; }
+  #stuck-qr.show { display:block; }
+  #pair-list { text-align:left; margin:12px 0 8px; }
+  #pair-list:empty { display:none; }
+  .pair-row { display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding:6px 0; font-size:13px; border-top:.5px solid var(--line); }
+  .pair-row button { border:none; background:none; color:var(--danger); font-size:12px; cursor:pointer; }
+  .peer .pa .plink { position:absolute; left:-3px; bottom:-3px; width:11px; height:11px;
+    border-radius:999px; background:var(--peer-blue); border:2px solid var(--panel); }
   #pin-card { background:var(--card); border-radius:var(--r-modal); padding:22px 24px; width:290px; text-align:center; box-shadow:0 16px 48px rgba(10,12,14,.28); }
   #pin-card h3 { font-size:15px; font-weight:600; margin-bottom:14px; }
   #pin-input { width:100%; border:1.5px solid var(--line); border-radius:10px; height:46px; box-sizing:border-box;
@@ -203,6 +221,15 @@
     color:var(--ink-3); display:flex; align-items:center; gap:5px; font-size:12.5px; }
   #tools button:hover { background:var(--line); }
   #tools svg { width:19px; height:19px; }
+  #send-home { font-size:13px; color:var(--brand); font-weight:600; max-width:42%;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #sendhome-list { display:none; position:absolute; bottom:52px; left:10px; z-index:40;
+    background:var(--card); border:.5px solid var(--line); border-radius:10px;
+    box-shadow:0 8px 24px rgba(23,25,29,.12); min-width:180px; padding:4px; }
+  #sendhome-list.show { display:block; }
+  #sendhome-list button { display:block; width:100%; text-align:left; border:none; background:none;
+    padding:8px 10px; font-size:13px; color:var(--ink); cursor:pointer; border-radius:7px; }
+  #sendhome-list button:hover { background:var(--panel); }
   #attach { display:none; }                 /* 移动端用 + 传文件,折角图标隐藏 */
   #clear-hist { margin-left:auto; }          /* 清理聊天记录:靠右 */
   #irow { display:flex; gap:9px; align-items:flex-end; }
@@ -460,7 +487,7 @@
     </div>
   </div>
 </div>
-<footer>
+<footer style="position:relative">
   <div id="tools">
     <button id="attach" title="">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12m0 0l-4-4m4 4l4-4M5 19h14"/></svg>
@@ -468,6 +495,8 @@
     <button id="attach-dir" title="">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
     </button>
+    <button id="send-home" style="display:none"></button>
+    <div id="sendhome-list"></div>
     <button id="clear-hist" title="">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>
       <span data-i18n="clear_history"></span>
@@ -531,9 +560,20 @@
   <div class="id-label" data-i18n="pin_label"></div>
   <input id="id-pin" inputmode="numeric" maxlength="6" autocomplete="off" autocapitalize="off">
   <div class="modal-note" data-i18n="pin_hint"></div>
+  <div class="id-label" data-i18n="forget_paired"></div>
+  <div id="pair-list"></div>
   <button id="id-save" class="block primary" data-i18n="save_broadcast"></button>
   <div class="modal-note" data-i18n="id_sync_note"></div>
   <button id="id-close">✕</button>
+</div></div>
+<div id="stuckmask"><div id="stuck-card">
+  <h3 id="stuck-title"></h3>
+  <div id="stuck-diag"></div>
+  <button id="stuck-relay" class="block primary" data-i18n="connect_relay"></button>
+  <button id="stuck-qr-btn" class="block minor" data-i18n="connect_qr"></button>
+  <div id="stuck-qr"></div>
+  <div class="modal-note" id="stuck-qr-tip" data-i18n="pair_qr_tip"></div>
+  <button id="stuck-close" class="block minor">✕</button>
 </div></div>
 <div id="pinmask"><div id="pin-card">
   <h3 id="pin-title"></h3>
@@ -546,6 +586,9 @@
 <script src="i18n.js"></script>
 <script src="qrcode.min.js"></script>
 <script src="zip.js"></script>
+<script src="pair-store.js"></script>
+<script src="resume.js"></script>
+<script src="ice-restart.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -2,7 +2,7 @@
 
 # Zap
 
-**Wi-Fi yang sama, buka & kirim.**
+**Pindai & kirim. Wi-Fi yang sama adalah bonus.**
 
 AirDrop tanpa perlu instal — alat bantu transfer tanpa perlu login.
 Perangkat di jaringan yang sama cukup membuka satu URL dan langsung masuk ke obrolan yang sama;

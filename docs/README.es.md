@@ -2,7 +2,7 @@
 
 # Zap
 
-**Mismo Wi‑Fi, abre y envía.**
+**Escanea y envía. El mismo Wi‑Fi es un extra.**
 
 Un AirDrop que no necesitas instalar — un asistente de transferencia sin inicio de sesión.
 Los dispositivos en la misma red abren una URL y llegan al mismo chat; el texto y los archivos
