@@ -39,8 +39,15 @@ function updateRoomState() {
   const dt = $('dl-title');
   if (dt) dt.textContent = roomLabel();
   // 在房码房里必须给一眼可见的出口,否则用户只能靠翻页脚才知道怎么回本网
+  const inRoom = !!(window.__manual && window.__room);
   const bk = $('dl-back');
-  if (bk) bk.classList.toggle('show', !!(window.__manual && window.__room));
+  if (bk) bk.classList.toggle('show', inRoom);
+  // 移动端没有侧边栏,上面那个按钮看不到 —— 房间条是手机上唯一的"你在哪 + 怎么出去"
+  const rb = $('room-bar');
+  if (rb) {
+    rb.classList.toggle('show', inRoom);
+    if (inRoom) rb.textContent = t('room_bar', { code: window.__room });
+  }
 }
 // 清空本机聊天记录(阅后即焚/退出销毁)
 function clearHistory() {
@@ -972,6 +979,8 @@ if (dlPlus) dlPlus.onclick = () => showInvite();
 if (dlInvite) dlInvite.onclick = () => showInvite();
 const dlBack = document.getElementById('dl-back');
 if (dlBack) dlBack.onclick = leaveRoom;
+const roomBar = document.getElementById('room-bar');
+if (roomBar) roomBar.onclick = leaveRoom;
 
 /* ── 信令连接 ── */
 let ws, peers = new Map(); // id -> {name, ua, pc, dc, sendQueue, recving}

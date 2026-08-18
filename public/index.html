@@ -14,6 +14,7 @@
     --bg:#EEF1F4; --panel:#F7F8FA; --card:#FFFFFF; --bubble:#FFFFFF;
     --ink:#17191D; --ink-2:#5B6470; --ink-3:#9AA6B2; --line:#E9ECEF;
     --dot-on:#10B981; --dot-mid:#F5A623; --dot-off:#C3CBD3; --danger:#F0564A;
+    --warn-bg:rgba(245,166,35,.14); --warn-ink:#8A5A00;
     --r-bubble:6px; --r-card:10px; --r-modal:14px;
   }
   @media (prefers-color-scheme: dark) { :root {
@@ -21,6 +22,7 @@
     --bg:#17191D; --panel:#1E2126; --card:#24272D; --bubble:#24272D;
     --ink:#ECEEF1; --ink-2:#9AA6B2; --ink-3:#5B6470; --line:#2C3037;
     --dot-off:#4A5158;
+    --warn-bg:rgba(245,166,35,.18); --warn-ink:#F0B860;
   } }
 
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -244,6 +246,14 @@
   #send.show { display:block; }
   #plus.hidden { display:none; }
   #file, #dir { display:none; }
+  /* 困在房码房里最要命的是"看不出来":移动端没有侧边栏,原本只有页脚一行 10.5px 灰字,
+   * 用户两次把"看不到人"归咎于网络/设备,真因都是地址栏残留的 #r=CODE。
+   * 这一条横在设备条正上方,说清"你在哪"并且点一下就能出去。 */
+  #room-bar { display:none; width:100%; box-sizing:border-box; border:none; cursor:pointer;
+    background:var(--warn-bg); color:var(--warn-ink); font-size:12.5px; font-weight:500;
+    padding:9px 12px; text-align:center; border-bottom:.5px solid var(--line);
+    font-family:inherit; }
+  #room-bar.show { display:block; }
   #foot-note { text-align:center; font-size:10.5px; color:var(--ink-3); padding:3px 0 6px;
                background:var(--panel); flex:none; }
 
@@ -409,6 +419,7 @@
     header .hside { width:auto; }
     #rename, #scan-top { display:none; }
     #peers { display:none; }         /* 桌面用中栏设备列表,隐藏横向设备条 */
+    #room-bar { display:none !important; }   /* 桌面走侧边栏的 dl-title + dl-back */
     /* 桌面无后摄:主按钮改成"出示二维码给手机扫",隐藏重复的 qr 小链接 */
     #hero .alt a[data-act=qr] { display:none; }
     .avatar { width:36px; height:36px; border-radius:8px; }
@@ -468,6 +479,7 @@
     <button id="lang"></button>
   </div>
 </header>
+<button id="room-bar"></button>
 <div id="peers"></div>
 <div id="list">
   <div id="hero">
