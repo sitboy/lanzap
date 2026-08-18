@@ -219,6 +219,50 @@ async function run() {
     try { host.close(); guest.close(); } catch {}
   }
 
+  // 同房但二层不通(CGNAT/热点/AP 隔离)时,两人码必须真的解决问题:
+  // 扫码=显式动作,这一对要拿到中继。而没扫码的自动重逢仍然只给 STUN。
+  {
+    const host = await openClient(port);
+    await hello(host, { id: 'dA10', fp: 'fA10' });
+    const guest = await openClient(port);
+    await hello(guest, { id: 'dB10', fp: 'fB10' });
+
+    host.send(JSON.stringify({ type: 'pair-listen' }));
+    const nm = await onceMsg(host, m => m.type === 'pair-nonce', 1500);
+
+    const hostIce = onceMsg(host, m => m.type === 'pair-ice', 2000);
+    const guestIce = onceMsg(guest, m => m.type === 'pair-ice', 2000);
+    const intro = onceMsg(guest, m => m.type === 'pair-intro', 2000);
+    guest.send(JSON.stringify({ type: 'pair-claim', nonce: nm.nonce }));
+
+    const gi = await intro;
+    assert.strictEqual(gi.sameRoom, true, 'same egress IP must land in the same room');
+    assert.ok(!hasTurnUrl(gi.iceServers), 'sameRoom pair-intro itself still must not carry turn:');
+
+    const hIce = await hostIce, gIce = await guestIce;
+    assert.strictEqual(hIce.reason, 'relay');
+    assert.strictEqual(gIce.reason, 'relay');
+    assert.ok(hasTurnUrl(hIce.iceServers), 'scanned pair must get a relay even in the same room');
+    assert.ok(hasTurnUrl(gIce.iceServers), 'scanned pair must get a relay even in the same room');
+    try { host.close(); guest.close(); } catch {}
+  }
+
+  // 反面:同房自动重逢(已配对,双方带 tok,没有任何扫码动作)绝不能拿到中继。
+  {
+    const TOK = 'AutoReunionTok0123456';
+    const x = await openClient(port);
+    await hello(x, { id: 'dA11', fp: 'fA11', pairs: [{ fp: 'fB11', tok: TOK }] });
+    const y = await openClient(port);
+    const yIntro = onceMsg(y, m => m.type === 'pair-intro', 2000);
+    const yIce = collect(y, m => m.type === 'pair-ice', 700);
+    await hello(y, { id: 'dB11', fp: 'fB11', pairs: [{ fp: 'fA11', tok: TOK }] });
+    const yi = await yIntro;
+    assert.strictEqual(yi.sameRoom, true);
+    assert.ok(!hasTurnUrl(yi.iceServers), 'auto reunion in the auto-LAN room must stay STUN-only');
+    assert.strictEqual((await yIce).length, 0, 'auto reunion must not trigger a relay pair-ice');
+    try { x.close(); y.close(); } catch {}
+  }
+
   await new Promise((res, rej) => server.close(err => err ? rej(err) : res()));
   console.log('pairing.test.js ok');
 }

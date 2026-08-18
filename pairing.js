@@ -219,6 +219,18 @@ function createPairing({ iceConfig, pairingEnabled }) {
     pairNonces.delete(n);
     claimGrants.set(edgeKey(rec.ws._id, ws._id), true);
     introPair(rec.ws, ws);
+    /* 同房也要补中继,否则两人码在这个场景等于没用。
+     * 场景:几台设备共用一个出口 IP(CGNAT / 手机热点 / 访客网),被 roomKey 判成同一本网房,
+     * 但二层根本不通 —— host 候选被浏览器藏成 .local 且组播不转发,srflx 又卡在 NAT 发夹上,
+     * 于是"看得见、连不上"。此时用户按诊断去扫两人码,同房分支不给 TURN,拿到的还是纯 STUN,
+     * 扫完和没扫一模一样(实测过)。而"已配对"要靠 DC 上交换 tok 才成立,DC 又正是连不上的东西 = 死锁。
+     * 红线守的是「没有用户明确动作就不给中继」,不是「同房就不给」:扫码/输码本身就是那个明确动作。
+     * 自动重逢(matchPairs)触发的同房 intro 仍然只续期打标、不给 TURN,默认路径依旧拿不到 relay。 */
+    if (sameRoom(rec.ws, ws)) {
+      (rec.ws._pairTurnWith || (rec.ws._pairTurnWith = new Set())).add(ws._id);
+      (ws._pairTurnWith || (ws._pairTurnWith = new Set())).add(rec.ws._id);
+      sendPairIce(rec.ws, ws, 'relay');
+    }
   }
 
   function rateOk(ws) {
