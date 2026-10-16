@@ -271,11 +271,8 @@
     font-size:13.5px; color:var(--ink-2); cursor:pointer; }
   #tabs button.on { background:var(--card); color:var(--ink); font-weight:600;
     box-shadow:0 1px 4px rgba(23,25,29,.10); }
-  #qr, #lan-pair-qr { display:flex; justify-content:center; margin-bottom:12px; }
-  #qr img, #qr canvas, #lan-pair-qr img, #lan-pair-qr canvas { border-radius:8px; background:#fff; padding:6px; }
-  #lan-pair-qr:empty { display:none; margin:0; }
-  #lan-pair-code { font-size:22px; font-weight:800; letter-spacing:5px; color:var(--ink); }
-  #lan-pair-code:empty { display:none; }
+  #qr { display:flex; justify-content:center; margin-bottom:12px; }
+  #qr img, #qr canvas { border-radius:8px; background:#fff; padding:6px; }
   #room-label { margin-bottom:16px; }
   #room-label small { display:block; font-size:11px; color:var(--ink-3); letter-spacing:.5px;
                       margin-bottom:5px; }
@@ -537,11 +534,8 @@
   </div>
   <div id="pane-invite">
     <div id="room-create">
-      <div id="lan-pair-qr"></div>
-      <div id="lan-pair-code"></div>
-      <div class="modal-note" data-i18n="pair_qr_tip"></div>
-      <button id="create-room-btn" class="block minor" data-i18n="create_room"></button>
       <div class="modal-note" data-i18n="room_auto_hint"></div>
+      <button id="create-room-btn" class="block primary" data-i18n="create_room"></button>
     </div>
     <div id="room-active">
       <div id="qr"></div>

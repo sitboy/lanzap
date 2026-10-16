@@ -259,7 +259,10 @@ function createPairing({ iceConfig, pairingEnabled }) {
     const ek = edgeKey(ws._id, dest._id);
     const hasEdge = liveEdges.has(ek);
     const granted = claimGrants.has(ek);
-    if (!canIntro(ws, dest) && !hasEdge && !granted) {
+    /* 同房 = 两边已经互相看见。直连失败时客户端会来要中继，这一下就是授权。
+     * 不再要求先扫码：码只能在连得上的 DataChannel 上交换，而连不上正是来要中继的原因。
+     * 不在同一房间的陌生人仍然要有 tok / 已有边 / 扫过码。 */
+    if (!sameRoom(ws, dest) && !canIntro(ws, dest) && !hasEdge && !granted) {
       sendJson(ws, { type: 'pair-deny', why: 'no-auth' });
       return false;
     }

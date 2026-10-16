@@ -111,16 +111,34 @@ async function run() {
     a.close();
   }
 
-  // 5. pair-relay without token/live-edge is rejected
+  // 5. same room, no token: they can already see each other, relay is allowed
   {
     const a = await openClient(port);
     const b = await openClient(port);
     await hello(a, { id: 'dA5', fp: 'fA5', room: 'ROOM5X' });
     await hello(b, { id: 'dB5', fp: 'fB5', room: 'ROOM5X' });
-    const denied = onceMsg(a, m => m.type === 'pair-deny' || m.type === 'pair-ice');
+    const iceA = onceMsg(a, m => m.type === 'pair-ice' || m.type === 'pair-deny');
+    const iceB = onceMsg(b, m => m.type === 'pair-ice' || m.type === 'pair-deny');
     a.send(JSON.stringify({ type: 'pair-relay', to: 'dB5' }));
+    const ra = await iceA, rb = await iceB;
+    assert.strictEqual(ra.type, 'pair-ice', 'visible roommate can relay without a scan');
+    assert.strictEqual(rb.type, 'pair-ice');
+    assert.strictEqual(ra.reason, 'relay');
+    assert.ok(hasTurnUrl(ra.iceServers));
+    assert.ok(hasTurnUrl(rb.iceServers));
+    a.close(); b.close();
+  }
+
+  // 5b. different room, no token/edge: still rejected
+  {
+    const a = await openClient(port);
+    const b = await openClient(port);
+    await hello(a, { id: 'dA5b', fp: 'fA5b', room: 'ROOM5A' });
+    await hello(b, { id: 'dB5b', fp: 'fB5b', room: 'ROOM5B' });
+    const denied = onceMsg(a, m => m.type === 'pair-deny' || m.type === 'pair-ice');
+    a.send(JSON.stringify({ type: 'pair-relay', to: 'dB5b' }));
     const m = await denied;
-    assert.strictEqual(m.type, 'pair-deny', 'roommate without tok/edge cannot mint TURN');
+    assert.strictEqual(m.type, 'pair-deny', 'stranger outside the room cannot mint TURN');
     a.close(); b.close();
   }
 
