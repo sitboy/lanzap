@@ -618,9 +618,9 @@ function fileCard(meta, role) {
       act.innerHTML = '';
     },
     // 发送方离线:置灰+不可获取
-    unavailable() {
+    unavailable(msg) {
       row.querySelector('.bubble.file').classList.add('dim');
-      act.innerHTML = `<span class="fc-off">◷ ${t('sender_gone')}</span>`;
+      act.innerHTML = `<span class="fc-off">◷ ${msg || t('sender_gone')}</span>`;
     },
     // 自己发出的卡:回执"保持页面开启可供下载" + "已被 N 人下载"
     selfReceipt() {
@@ -752,9 +752,9 @@ function folderCard(meta, role) {
       const b = row.querySelector('.bubble.file'); if (b) b.classList.remove('dim');
       sizeEl.innerHTML = `<span class="fc-hint">${t('resuming')}</span>`;
     },
-    unavailable() {
+    unavailable(msg) {
       row.querySelector('.bubble.file').classList.add('dim');
-      act.innerHTML = `<span class="fc-off">◷ ${t('sender_gone')}</span>`;
+      act.innerHTML = `<span class="fc-off">◷ ${msg || t('sender_gone')}</span>`;
     },
     // 传到一半断了:说清已收多少,给重试(重试=重新向发送方拉整批)
     interrupted(onRetry) {
@@ -793,6 +793,9 @@ function folderCard(meta, role) {
  * 好处:同一网络任何打开方式都进同一大房间,不会因存储隔离(隐私模式)莫名分家 */
 let urlRoom = (location.hash.match(/r=([A-Za-z0-9]{4,8})/) || [])[1] || '';
 let urlPairNonce = (location.hash.match(/n=([A-Za-z0-9]{6})/) || [])[1] || '';
+let typedClaim = '';          // 加入框里输入的 6 位：先当两人码认，认不中再当房码
+let lanPairPending = false;   // 已经向服务器要了两人码，别在回包前再要一次把码换掉
+let lanPairAt = 0;
 const card = document.getElementById('invite-card');
 
 function consumePairHash() {
@@ -847,7 +850,7 @@ function renderInvitePane() {
   const inRoom = !!urlRoom;
   document.getElementById('room-create').style.display = inRoom ? 'none' : '';
   document.getElementById('room-active').style.display = inRoom ? '' : 'none';
-  if (!inRoom) return;                     // 本网:只展示"创建私密房"引导,不出码(=不建房、不离网)
+  if (!inRoom) { ensureLanPair(); return; }   // 本网:出两人码,不建房、不离网。建房会把已经看见的对方弄丢
   const qr = document.getElementById('qr'); qr.innerHTML = '';
   // 232 而非 168:手机举远一点,168px 的码在 640 宽采样图里只剩一小块,jsQR 很吃力。
   // 弹层内容区 264px 宽,232+12(padding) 刚好放得下。
@@ -914,7 +917,18 @@ document.getElementById('leave-btn').onclick = leaveRoom;
 const codeInput = document.getElementById('code-input'), codeGo = document.getElementById('code-go');
 codeInput.placeholder = t('code_placeholder');
 codeInput.oninput = () => codeGo.classList.toggle('on', codeInput.value.trim().length >= 4);
-codeGo.onclick = () => { const v = codeInput.value.trim(); if (v.length >= 4) enterRoom(v); };
+codeGo.onclick = () => {
+  const v = codeInput.value.trim();
+  if (v.length < 4) return;
+  // 两人码是 6 位,和房码同长。先认两人码(留在本网、给中继);
+  // 服务器说没有这张码,再当成房码进房间。
+  if (v.length === 6 && ws && ws.readyState === 1) {
+    typedClaim = v.toUpperCase();
+    ws.send(JSON.stringify({ type: 'pair-claim', nonce: typedClaim }));
+    return;
+  }
+  enterRoom(v);
+};
 codeInput.onkeydown = e => { if (e.key === 'Enter') codeGo.onclick(); };
 
 /* 站内扫码:jsQR 懒加载软解,唯一路径(为什么不用 BarcodeDetector 见 startScan 内注释) */
@@ -1045,6 +1059,7 @@ function connect() {
       pairs: ZP ? ZP.pairsForHello(pairedDevices) : undefined,
       ua: /iPhone|iPad|Android/.test(navigator.userAgent) ? 'mobile' : 'desktop' }));
     claimPendingNonce();
+    if (window.__wantLanPair) { window.__wantLanPair = false; lanPairPending = false; ensureLanPair(); }
   };
   ws.onmessage = async e => {
     lastServerMsg = Date.now();                     // 任一服务器消息都刷新活性时间戳(僵尸检测用)
@@ -1087,6 +1102,11 @@ function connect() {
     } else if (m.type === 'ice-refresh') {
       if (Array.isArray(m.iceServers)) iceServers = m.iceServers;
     } else if (m.type === 'pair-intro') {
+      if (typedClaim) {
+        typedClaim = '';
+        document.getElementById('mask').classList.remove('show');
+        sysLine(t('joined_via_code', { name: (m.peer && m.peer.name) || '' }));
+      }
       onPairIntro(m);
     } else if (m.type === 'pair-gone') {
       const pr = peers.get(m.id);
@@ -1097,13 +1117,25 @@ function connect() {
       }
     } else if (m.type === 'pair-ice') {
       onPairIce(m);
+      // 两人码成功:双方都拿到中继。码的使命完成,别再挡着已经看见的那台设备
+      if (m.reason === 'relay' && !urlRoom) {
+        const mask = document.getElementById('mask');
+        if (mask) mask.classList.remove('show');
+        const stuck = document.getElementById('stuckmask');
+        if (stuck) stuck.classList.remove('show');
+      }
     } else if (m.type === 'pair-nonce') {
       showPairNonce(m.nonce);
     } else if (m.type === 'pair-miss') {
-      alert(t('pair_miss'));
+      if (typedClaim) {
+        const code = typedClaim;
+        typedClaim = '';
+        enterRoom(code);                 // 不是两人码,就按房码进
+      } else alert(t('pair_miss'));
     } else if (m.type === 'pair-limit') {
       alert(t('pair_limit'));
     } else if (m.type === 'pair-deny') {
+      typedClaim = '';
       // roommate without tok/edge — stay stuck; no TURN minted
     } else if (m.type === 'signal') {
       handleSignal(m.from, m.data);
@@ -1536,13 +1568,31 @@ function explainStuck(id) {
   sysDetail(candSummary(p));
 }
 
+/* 两人码不换房间。组队弹层开着就画在那里;连不上的设备弹层优先,
+ * 免得两处各显示一张已经被换掉的码。 */
 function showPairNonce(nonce) {
-  const box = document.getElementById('stuck-qr');
+  lanPairPending = false;
+  lanPairAt = Date.now();
+  const stuckOpen = document.getElementById('stuckmask').classList.contains('show');
+  const inviteOpen = document.getElementById('mask').classList.contains('show') && !urlRoom;
+  const box = stuckOpen ? document.getElementById('stuck-qr')
+    : (inviteOpen ? document.getElementById('lan-pair-qr') : document.getElementById('stuck-qr'));
   if (!box) return;
   box.innerHTML = '';
   box.classList.add('show');
   const url = location.origin + '/#n=' + nonce;
-  if (window.QRCode) new QRCode(box, { text: url, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
+  if (window.QRCode) new QRCode(box, { text: url, width: 212, height: 212, correctLevel: QRCode.CorrectLevel.M });
+  const codeEl = document.getElementById('lan-pair-code');
+  if (codeEl) codeEl.textContent = (inviteOpen && !stuckOpen) ? nonce : '';
+}
+function ensureLanPair() {
+  const box = document.getElementById('lan-pair-qr');
+  // 码 5 分钟过期。没过期就接着用，别一打开弹层就换码，对方正扫的那张会立刻作废
+  if (box && box.childElementCount && Date.now() - lanPairAt < 4 * 60 * 1000) return;
+  if (!(ws && ws.readyState === 1)) { window.__wantLanPair = true; return; }
+  if (lanPairPending) return;
+  lanPairPending = true;
+  ws.send(JSON.stringify({ type: 'pair-listen' }));
 }
 
 {
@@ -1557,7 +1607,13 @@ function showPairNonce(nonce) {
       ws.send(JSON.stringify({ type: 'pair-relay', to: stuckTargetId }));
   };
   if (qrBtn) qrBtn.onclick = () => {
+    const box = document.getElementById('lan-pair-qr');
+    if (box) box.innerHTML = '';
+    const codeEl = document.getElementById('lan-pair-code');
+    if (codeEl) codeEl.textContent = '';
+    lanPairPending = false;
     if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'pair-listen' }));
+    else window.__wantLanPair = true;
   };
 }
 
@@ -1995,6 +2051,14 @@ async function streamFileTo(info, file, fileId, selfCard) {
 /* ── 发送入口:群聊=全员,私聊=目标设备 ── */
 function isRoomEdge(p) { return p && p.edge !== 'pair'; }
 function targets() { return [...peers.values()].filter(p => isRoomEdge(p) && p.dc && p.dc.readyState === 'open'); }
+// 列表里看得到人,但一条直连都没有:文件发出去等于没发。别假装成功,也别说对方走了。
+function warnIfUnreachable() {
+  if (targets().length) return;
+  const names = [];
+  for (const p of peers.values()) if (isRoomEdge(p) && p.name) names.push(p.name);
+  if (!names.length) return;
+  sysLine(t('no_direct', { name: names.slice(0, 3).join('、') }));
+}
 function convTargets() {
   if (currentConv === 'all') return targets();
   const p = peers.get(currentConv);
@@ -2020,6 +2084,7 @@ function sendText() {
   if (currentConv === 'all') {
     const mid = newMid(); markSeen(mid);   // 群聊:洪泛给所有邻居,靠 gossip 扩散到全房
     broadcastFrame({ t: 'text', mid, fromId: myId, from: myName, fromKind: myKind, text, ts }, null);
+    warnIfUnreachable();
   } else {                                  // 私聊:只发目标设备,不洪泛
     const p = peers.get(currentConv);
     if (p && p.dc && p.dc.readyState === 'open')
@@ -2208,6 +2273,7 @@ async function sendFolder(items, rootRaw) {
     const mid = newMid(); markSeen(mid);
     myBatches.set(batchId, { items: list2, card, meta, group: true, mid, wire });
     broadcastFrame({ t: 'boffer', mid, ...wire }, null);
+    warnIfUnreachable();
   } else {
     const p = peers.get(conv);
     myBatches.set(batchId, { items: list2, card, meta, group: false, conv, wire });
@@ -2259,6 +2325,7 @@ async function sendFile(file) {
     const mid = newMid(); markSeen(mid);
     myFiles.set(fileId, { file, card, meta, group: true, mid });
     broadcastFrame({ t: 'offer', mid, ...meta }, null);
+    warnIfUnreachable();
   } else {                                  // 私聊:先请求接收(默认对方秒批;对方设了接收码且我非信任→需先对码)
     const p = peers.get(conv);
     myFiles.set(fileId, { file, card, meta, group: false, conv });
@@ -2415,7 +2482,11 @@ function renderOffer(meta) {
     const sp = peers.get(meta.fromId);
     if (sp && sp.dc && sp.dc.readyState === 'open') sp.dc.send(JSON.stringify(pull));
     else broadcastFrame({ ...pull, mid: newMid() }, null);   // 不直连发送方就 gossip 路由拉取请求
-    rec.timer = setTimeout(() => card.unavailable(), 9000);  // 9s 无响应=发送方离线
+    rec.timer = setTimeout(() => {
+      const sp = peers.get(meta.fromId);
+      // 人还在列表里却拉不到:直连没通,不是对方走了
+      card.unavailable(sp ? t('no_direct', { name: sp.name }) : '');
+    }, 9000);
   });
   return card;
 }
