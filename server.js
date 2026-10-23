@@ -217,7 +217,7 @@ function startServer(port) {
   return new Promise((resolve, reject) => {
     const onErr = err => { server.removeListener('error', onErr); reject(err); };
     server.once('error', onErr);
-    server.listen(p, () => {
+    server.listen(p, process.env.HOST, () => {
       server.removeListener('error', onErr);
       const addr = server.address();
       const bound = typeof addr === 'object' && addr ? addr.port : p;
